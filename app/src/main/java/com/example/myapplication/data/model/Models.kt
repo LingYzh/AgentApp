@@ -94,11 +94,15 @@ data class AgentProfile(
     val id: String = UUID.randomUUID().toString(),
     val name: String = "",
     val emoji: String = "🤖",
+    /** 自选头像本地文件路径（为空则使用 emoji） */
+    val avatarPath: String? = null,
     val description: String = "",
     val systemPrompt: String = "",
     /** 默认使用的模型配置，null = 跟随全局选中 */
     val providerId: String? = null,
-    val model: String? = null
+    val model: String? = null,
+    /** 授权该 Agent 可用的工具名列表，空表示全量工具均可用 */
+    val tools: List<String> = emptyList()
 )
 
 /** 记忆索引条目，正文存 memory/<id>.md */
@@ -113,7 +117,9 @@ data class MemoryEntry(
 /** Skill 元信息（从 SKILL.md frontmatter 解析） */
 data class SkillMeta(
     val name: String,
-    val description: String
+    val description: String,
+    val version: String = "1.0.0",
+    val license: String = "MIT"
 )
 
 /**

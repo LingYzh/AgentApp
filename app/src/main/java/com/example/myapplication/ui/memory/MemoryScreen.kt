@@ -15,8 +15,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -27,6 +29,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,7 +40,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.myapplication.ui.theme.AgentTheme
+import com.example.myapplication.ui.theme.ExpressiveTokens
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -94,6 +100,27 @@ fun MemoryScreen(openDrawer: () -> Unit) {
     }
     val memories by vm.memories.collectAsStateWithLifecycle()
 
+    MemoryContent(
+        memories = memories,
+        memoryContentProvider = { id -> vm.read(id) },
+        onOpenDrawer = openDrawer,
+        onSaveMemory = { id, title, content -> vm.save(id, title, content) },
+        onDeleteMemory = { id -> vm.delete(id) }
+    )
+}
+
+/**
+ * 记忆列表纯 UI 组件
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MemoryContent(
+    memories: List<MemoryEntry>,
+    memoryContentProvider: (String) -> String,
+    onOpenDrawer: () -> Unit,
+    onSaveMemory: (id: String?, title: String, content: String) -> Unit,
+    onDeleteMemory: (String) -> Unit
+) {
     var editTarget by remember { mutableStateOf<Pair<String?, Boolean>?>(null) } // (id?, open)
 
     Scaffold(
@@ -101,8 +128,13 @@ fun MemoryScreen(openDrawer: () -> Unit) {
             TopAppBar(
                 title = { Text("记忆") },
                 navigationIcon = {
-                    IconButton(onClick = openDrawer) { Icon(Icons.Filled.Menu, "菜单") }
-                }
+                    IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "菜单") }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface
+                )
             )
         },
         floatingActionButton = {
@@ -113,43 +145,30 @@ fun MemoryScreen(openDrawer: () -> Unit) {
     ) { padding ->
         if (memories.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("暂无记忆。Agent 会用 save_memory 工具自动保存重要信息。",
+                Text(
+                    "暂无记忆。Agent 会用 save_memory 工具自动保存重要信息。",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(32.dp))
+                    modifier = Modifier.padding(32.dp)
+                )
             }
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(8.dp),
+                contentPadding = PaddingValues(
+                    start = ExpressiveTokens.ScreenHorizontalPadding,
+                    top = 8.dp,
+                    end = ExpressiveTokens.ScreenHorizontalPadding,
+                    bottom = ExpressiveTokens.FabSafeBottomPadding
+                ),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(memories, key = { it.id }) { entry ->
-                    Card(Modifier.fillMaxWidth().clickable { editTarget = entry.id to true }) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(entry.title, style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    vm.read(entry.id).take(80),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2, overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
-                                        .format(Date(entry.updatedAt)),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(onClick = { vm.delete(entry.id) }) {
-                                Icon(Icons.Filled.Delete, "删除")
-                            }
-                        }
-                    }
+                    MemoryItem(
+                        entry = entry,
+                        content = memoryContentProvider(entry.id),
+                        onClick = { editTarget = entry.id to true },
+                        onDelete = { onDeleteMemory(entry.id) }
+                    )
                 }
             }
         }
@@ -157,27 +176,142 @@ fun MemoryScreen(openDrawer: () -> Unit) {
 
     editTarget?.takeIf { it.second }?.let { (id, _) ->
         var title by remember(id) { mutableStateOf(id?.let { eid -> memories.firstOrNull { it.id == eid }?.title } ?: "") }
-        var content by remember(id) { mutableStateOf(id?.let { vm.read(it) } ?: "") }
+        var content by remember(id) { mutableStateOf(id?.let { memoryContentProvider(it) } ?: "") }
         AlertDialog(
             onDismissRequest = { editTarget = null },
             title = { Text(if (id == null) "添加记忆" else "编辑记忆") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(),
-                        label = { Text("标题") }, singleLine = true)
-                    OutlinedTextField(content, { content = it }, Modifier.fillMaxWidth(),
-                        label = { Text("内容") }, minLines = 4, maxLines = 8)
+                    OutlinedTextField(
+                        title, { title = it }, Modifier.fillMaxWidth(),
+                        label = { Text("标题") }, singleLine = true
+                    )
+                    OutlinedTextField(
+                        content, { content = it }, Modifier.fillMaxWidth(),
+                        label = { Text("内容") }, minLines = 4, maxLines = 8
+                    )
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (title.isNotBlank()) vm.save(id, title.trim(), content)
+                    if (title.isNotBlank()) onSaveMemory(id, title.trim(), content)
                     editTarget = null
                 }) { Text("保存") }
             },
             dismissButton = {
                 TextButton(onClick = { editTarget = null }) { Text("取消") }
             }
+        )
+    }
+}
+
+@Composable
+fun MemoryItem(
+    entry: MemoryEntry,
+    content: String,
+    onClick: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(
+        shape = ExpressiveTokens.CardShape,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    entry.title, style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    content.take(80),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+                        .format(Date(entry.updatedAt)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Filled.Delete, "删除")
+            }
+        }
+    }
+}
+
+@Preview(showBackground = true, name = "Memory - Light")
+@Composable
+private fun MemoryPreviewLight() {
+    val sampleMemories = listOf(
+        MemoryEntry(id = "m1", title = "主人的习惯偏好", updatedAt = System.currentTimeMillis() - 100000),
+        MemoryEntry(id = "m2", title = "项目架构方案要求", updatedAt = System.currentTimeMillis() - 86400000)
+    )
+    val dummyContentMap = mapOf(
+        "m1" to "主人喜欢整洁规范的代码风格，偏好使用 4 格空格缩进与优雅的解耦模式。",
+        "m2" to "所有 Compose 页面需保持状态解耦并具备深浅色双向预览支持。"
+    )
+    AgentTheme(themeMode = "light") {
+        MemoryContent(
+            memories = sampleMemories,
+            memoryContentProvider = { dummyContentMap[it] ?: "" },
+            onOpenDrawer = {},
+            onSaveMemory = { _, _, _ -> },
+            onDeleteMemory = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "Memory - Dark")
+@Composable
+private fun MemoryPreviewDark() {
+    val sampleMemories = listOf(
+        MemoryEntry(id = "m1", title = "主人的习惯偏好", updatedAt = System.currentTimeMillis())
+    )
+    AgentTheme(themeMode = "dark") {
+        MemoryContent(
+            memories = sampleMemories,
+            memoryContentProvider = { "主人最喜欢猫娘女仆全心全意的贴心侍奉了 nya~❤" },
+            onOpenDrawer = {},
+            onSaveMemory = { _, _, _ -> },
+            onDeleteMemory = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "Memory - Empty")
+@Composable
+private fun MemoryEmptyPreview() {
+    AgentTheme(themeMode = "light") {
+        MemoryContent(
+            memories = emptyList(),
+            memoryContentProvider = { "" },
+            onOpenDrawer = {},
+            onSaveMemory = { _, _, _ -> },
+            onDeleteMemory = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "Memory Item")
+@Composable
+private fun MemoryItemPreview() {
+    val entry = MemoryEntry(id = "test", title = "示例记忆条目", updatedAt = System.currentTimeMillis())
+    AgentTheme(themeMode = "light") {
+        MemoryItem(
+            entry = entry,
+            content = "这是一条用于组件预览的记忆内容测试条目...",
+            onClick = {},
+            onDelete = {}
         )
     }
 }

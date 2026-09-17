@@ -6,8 +6,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,12 +34,16 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -57,9 +65,14 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
 import com.example.myapplication.AgentApp
 import com.example.myapplication.Routes
+import com.example.myapplication.safeNavigateDirect
+import com.example.myapplication.safePopBackStack
+import com.example.myapplication.ui.theme.ExpressiveTokens
+import com.example.myapplication.data.model.AppConfig
 import com.example.myapplication.data.model.ChatMessage
 import com.example.myapplication.data.model.ProviderConfig
 import com.example.myapplication.data.model.ProviderType
+import com.example.myapplication.ui.theme.AgentTheme
 import com.example.myapplication.provider.StreamEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -182,55 +195,105 @@ fun ProvidersScreen(navController: NavHostController, openDrawer: () -> Unit) {
     }
     val config by vm.config.collectAsStateWithLifecycle()
 
+    ProvidersContent(
+        config = config,
+        onOpenDrawer = openDrawer,
+        onAddProvider = { navController.safeNavigateDirect(Routes.providerEdit("new")) },
+        onSelectProvider = { id -> vm.select(id) },
+        onEditProvider = { id -> navController.safeNavigateDirect(Routes.providerEdit(id)) },
+        onDeleteProvider = { id -> vm.deleteProvider(id) }
+    )
+}
+
+/**
+ * 模型配置列表纯 UI 组件
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ProvidersContent(
+    config: AppConfig,
+    onOpenDrawer: () -> Unit,
+    onAddProvider: () -> Unit,
+    onSelectProvider: (String) -> Unit,
+    onEditProvider: (String) -> Unit,
+    onDeleteProvider: (String) -> Unit
+) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("模型配置") },
                 navigationIcon = {
-                    IconButton(onClick = openDrawer) { Icon(Icons.Filled.Menu, "菜单") }
-                }
+                    IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "菜单") }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface
+                )
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { navController.navigate(Routes.providerEdit("new")) }) {
+            FloatingActionButton(onClick = onAddProvider) {
                 Icon(Icons.Filled.Add, "添加")
             }
         }
     ) { padding ->
         if (config.providers.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("还没有模型配置，点右下角添加\n支持 OpenAI 兼容 / Anthropic / Gemini / 自定义模板",
+                Text(
+                    "还没有模型配置，点右下角添加\n支持 OpenAI 兼容 / Anthropic / Gemini / 自定义模板",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(32.dp))
+                    modifier = Modifier.padding(32.dp)
+                )
             }
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(8.dp),
+                contentPadding = PaddingValues(
+                    start = ExpressiveTokens.ScreenHorizontalPadding,
+                    top = 8.dp,
+                    end = ExpressiveTokens.ScreenHorizontalPadding,
+                    bottom = ExpressiveTokens.FabSafeBottomPadding
+                ),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(config.providers, key = { it.id }) { p ->
-                    Card(Modifier.fillMaxWidth().clickable {
-                        navController.navigate(Routes.providerEdit(p.id))
-                    }) {
+                    Card(
+                        shape = ExpressiveTokens.CardShape,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                        ),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            onEditProvider(p.id)
+                        }
+                    ) {
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             RadioButton(
                                 selected = p.id == config.selectedProviderId,
-                                onClick = { vm.select(p.id) }
+                                onClick = { onSelectProvider(p.id) }
                             )
                             Column(Modifier.weight(1f)) {
-                                Text(p.name.ifBlank { p.model },
-                                    style = MaterialTheme.typography.titleMedium)
-                                Text("${p.type.label} · ${p.model}",
+                                Text(
+                                    p.name.ifBlank { p.model },
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    "${p.type.label} · ${p.model}",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(p.baseUrl, style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    p.baseUrl,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
                             }
-                            IconButton(onClick = { vm.deleteProvider(p.id) }) {
+                            IconButton(onClick = { onDeleteProvider(p.id) }) {
                                 Icon(Icons.Filled.Delete, "删除")
                             }
                         }
@@ -259,26 +322,61 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
         else app.store.loadConfig().providers.firstOrNull { it.id == providerId }
     }
 
-    var name by remember { mutableStateOf(existing?.name ?: "") }
-    var type by remember { mutableStateOf(existing?.type ?: ProviderType.OPENAI) }
-    var baseUrl by remember { mutableStateOf(existing?.baseUrl ?: defaultBaseUrl(type)) }
-    var apiKey by remember { mutableStateOf(existing?.apiKey ?: "") }
-    var model by remember { mutableStateOf(existing?.model ?: "") }
-    var temperature by remember { mutableStateOf(existing?.temperature?.toString() ?: "") }
+    ProviderEditContent(
+        isNew = providerId == "new",
+        initialConfig = existing,
+        testing = testing,
+        testResult = testResult,
+        fetchingModels = fetchingModels,
+        fetchedModels = fetchedModels,
+        fetchError = fetchError,
+        onBack = { navController.safePopBackStack() },
+        onSave = { config ->
+            vm.saveProvider(config)
+            navController.safePopBackStack()
+        },
+        onTest = { config -> vm.testConnection(config) },
+        onFetchModels = { config -> vm.fetchModels(config) }
+    )
+}
+
+/**
+ * 模型配置编辑页面纯 UI 组件
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ProviderEditContent(
+    isNew: Boolean,
+    initialConfig: ProviderConfig?,
+    testing: Boolean,
+    testResult: String?,
+    fetchingModels: Boolean,
+    fetchedModels: List<String>?,
+    fetchError: String?,
+    onBack: () -> Unit,
+    onSave: (ProviderConfig) -> Unit,
+    onTest: (ProviderConfig) -> Unit,
+    onFetchModels: (ProviderConfig) -> Unit
+) {
+    var name by remember { mutableStateOf(initialConfig?.name ?: "") }
+    var type by remember { mutableStateOf(initialConfig?.type ?: ProviderType.OPENAI) }
+    var baseUrl by remember { mutableStateOf(initialConfig?.baseUrl ?: defaultBaseUrl(type)) }
+    var apiKey by remember { mutableStateOf(initialConfig?.apiKey ?: "") }
+    var model by remember { mutableStateOf(initialConfig?.model ?: "") }
+    var temperature by remember { mutableStateOf(initialConfig?.temperature?.toString() ?: "") }
     var headers by remember {
-        mutableStateOf(existing?.extraHeaders?.entries?.joinToString("\n") { "${it.key}: ${it.value}" } ?: "")
+        mutableStateOf(initialConfig?.extraHeaders?.entries?.joinToString("\n") { "${it.key}: ${it.value}" } ?: "")
     }
-    var template by remember { mutableStateOf(existing?.customRequestTemplate ?: "") }
-    var responsePath by remember { mutableStateOf(existing?.customResponsePath ?: "") }
-    var streamPath by remember { mutableStateOf(existing?.customStreamPath ?: "") }
+    var template by remember { mutableStateOf(initialConfig?.customRequestTemplate ?: "") }
+    var responsePath by remember { mutableStateOf(initialConfig?.customResponsePath ?: "") }
+    var streamPath by remember { mutableStateOf(initialConfig?.customStreamPath ?: "") }
     var typeMenuExpanded by remember { mutableStateOf(false) }
     var modelMenuExpanded by remember { mutableStateOf(false) }
 
-    // 模型下拉候选：刚拉取的 > 已保存的 > 空
-    val modelCandidates = fetchedModels ?: existing?.models ?: emptyList()
+    val modelCandidates = fetchedModels ?: initialConfig?.models ?: emptyList()
 
     fun buildConfig() = ProviderConfig(
-        id = existing?.id ?: java.util.UUID.randomUUID().toString(),
+        id = initialConfig?.id ?: java.util.UUID.randomUUID().toString(),
         name = name.trim(),
         type = type,
         baseUrl = baseUrl.trim(),
@@ -300,28 +398,39 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (existing == null) "添加模型" else "编辑模型") },
+                title = { Text(if (isNew) "添加模型" else "编辑模型") },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
                     }
                 },
                 actions = {
                     IconButton(onClick = {
-                        vm.saveProvider(buildConfig())
-                        navController.popBackStack()
+                        onSave(buildConfig())
                     }) { Icon(Icons.Filled.Check, "保存") }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                )
             )
         }
     ) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(),
-                label = { Text("名称") }, singleLine = true)
+            OutlinedTextField(
+                name, { name = it }, Modifier.fillMaxWidth(),
+                label = { Text("名称") }, singleLine = true
+            )
 
             ExposedDropdownMenuBox(
                 expanded = typeMenuExpanded,
@@ -333,7 +442,7 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
                     readOnly = true,
                     label = { Text("类型") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(typeMenuExpanded) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)
                 )
                 ExposedDropdownMenu(
                     expanded = typeMenuExpanded,
@@ -344,7 +453,7 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
                             text = { Text(t.label) },
                             onClick = {
                                 type = t
-                                if (existing == null || baseUrl == defaultBaseUrl(type)) {
+                                if (initialConfig == null || baseUrl == defaultBaseUrl(type)) {
                                     baseUrl = defaultBaseUrl(t)
                                 }
                                 typeMenuExpanded = false
@@ -354,14 +463,17 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
                 }
             }
 
-            OutlinedTextField(baseUrl, { baseUrl = it }, Modifier.fillMaxWidth(),
+            OutlinedTextField(
+                baseUrl, { baseUrl = it }, Modifier.fillMaxWidth(),
                 label = { Text("Base URL") }, singleLine = true,
-                supportingText = { Text(baseUrlHint(type)) })
-            OutlinedTextField(apiKey, { apiKey = it }, Modifier.fillMaxWidth(),
+                supportingText = { Text(baseUrlHint(type)) }
+            )
+            OutlinedTextField(
+                apiKey, { apiKey = it }, Modifier.fillMaxWidth(),
                 label = { Text("API Key") }, singleLine = true,
-                visualTransformation = PasswordVisualTransformation())
+                visualTransformation = PasswordVisualTransformation()
+            )
 
-            // 模型：可输入 + 下拉（来自 /models 拉取结果）
             ExposedDropdownMenuBox(
                 expanded = modelMenuExpanded,
                 onExpandedChange = { modelMenuExpanded = it }
@@ -372,7 +484,7 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
                     label = { Text("模型名（可输入或从下拉选择）") },
                     singleLine = true,
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(modelMenuExpanded) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryEditable)
                 )
                 ExposedDropdownMenu(
                     expanded = modelMenuExpanded,
@@ -391,7 +503,7 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 OutlinedButton(
-                    onClick = { vm.fetchModels(buildConfig()) },
+                    onClick = { onFetchModels(buildConfig()) },
                     enabled = !fetchingModels && type != ProviderType.CUSTOM && baseUrl.isNotBlank()
                 ) {
                     if (fetchingModels) CircularProgressIndicator(
@@ -399,37 +511,53 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
                     ) else Text("获取模型列表")
                 }
                 if (modelCandidates.isNotEmpty()) {
-                    Text("${modelCandidates.size} 个模型可选",
+                    Text(
+                        "${modelCandidates.size} 个模型可选",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
             fetchError?.let {
-                Text("❌ $it", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error)
+                Text(
+                    "❌ $it", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
             }
 
-            OutlinedTextField(temperature, { temperature = it }, Modifier.fillMaxWidth(),
-                label = { Text("温度（可留空）") }, singleLine = true)
-            OutlinedTextField(headers, { headers = it }, Modifier.fillMaxWidth(),
-                label = { Text("附加请求头（每行一个 Key: Value，可留空）") }, minLines = 1, maxLines = 4)
+            OutlinedTextField(
+                temperature, { temperature = it }, Modifier.fillMaxWidth(),
+                label = { Text("温度（可留空）") }, singleLine = true
+            )
+            OutlinedTextField(
+                headers, { headers = it }, Modifier.fillMaxWidth(),
+                label = { Text("附加请求头（每行一个 Key: Value，可留空）") }, minLines = 1, maxLines = 4
+            )
 
             if (type == ProviderType.CUSTOM) {
                 Text("自定义模板", style = MaterialTheme.typography.titleSmall)
-                Text("占位符：\${model} \${system} \${messages} \${tools}；留空则按 OpenAI 风格发送",
+                Text(
+                    "占位符：\${model} \${system} \${messages} \${tools}；留空则按 OpenAI 风格发送",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedTextField(template, { template = it }, Modifier.fillMaxWidth(),
-                    label = { Text("请求体模板（JSON）") }, minLines = 4, maxLines = 8)
-                OutlinedTextField(responsePath, { responsePath = it }, Modifier.fillMaxWidth(),
-                    label = { Text("非流式响应提取路径，如 $.choices[0].message.content") }, singleLine = true)
-                OutlinedTextField(streamPath, { streamPath = it }, Modifier.fillMaxWidth(),
-                    label = { Text("SSE 行提取路径，如 $.choices[0].delta.content") }, singleLine = true)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    template, { template = it }, Modifier.fillMaxWidth(),
+                    label = { Text("请求体模板（JSON）") }, minLines = 4, maxLines = 8
+                )
+                OutlinedTextField(
+                    responsePath, { responsePath = it }, Modifier.fillMaxWidth(),
+                    label = { Text("非流式响应提取路径，如 $.choices[0].message.content") }, singleLine = true
+                )
+                OutlinedTextField(
+                    streamPath, { streamPath = it }, Modifier.fillMaxWidth(),
+                    label = { Text("SSE 行提取路径，如 $.choices[0].delta.content") }, singleLine = true
+                )
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Button(
-                    onClick = { vm.testConnection(buildConfig()) },
+                    onClick = { onTest(buildConfig()) },
                     enabled = !testing && baseUrl.isNotBlank() && model.isNotBlank()
                 ) {
                     if (testing) CircularProgressIndicator(
@@ -440,10 +568,18 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
                 }
             }
             testResult?.let {
-                Card(Modifier.fillMaxWidth()) {
+                Card(
+                    shape = ExpressiveTokens.CardShape,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                    ),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Text(it, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
                 }
             }
+            Spacer(modifier = Modifier.height(ExpressiveTokens.FabSafeBottomPadding))
         }
     }
 }
@@ -460,4 +596,128 @@ private fun baseUrlHint(type: ProviderType): String = when (type) {
     ProviderType.ANTHROPIC -> "填域名即可，自动追加 /v1/messages"
     ProviderType.GEMINI -> "填域名即可，自动追加 /v1beta/models/<model>:streamGenerateContent"
     ProviderType.CUSTOM -> "完整请求 URL"
+}
+
+@Preview(showBackground = true, name = "Providers - Light")
+@Composable
+private fun ProvidersPreviewLight() {
+    val sampleConfig = AppConfig(
+        selectedProviderId = "p1",
+        providers = listOf(
+            ProviderConfig(
+                id = "p1",
+                name = "Claude 官方",
+                type = ProviderType.ANTHROPIC,
+                baseUrl = "https://api.anthropic.com",
+                model = "claude-3-7-sonnet"
+            ),
+            ProviderConfig(
+                id = "p2",
+                name = "DeepSeek",
+                type = ProviderType.OPENAI,
+                baseUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-chat"
+            )
+        )
+    )
+    AgentTheme(themeMode = "light") {
+        ProvidersContent(
+            config = sampleConfig,
+            onOpenDrawer = {},
+            onAddProvider = {},
+            onSelectProvider = {},
+            onEditProvider = {},
+            onDeleteProvider = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "Providers - Dark")
+@Composable
+private fun ProvidersPreviewDark() {
+    val sampleConfig = AppConfig(
+        selectedProviderId = "p1",
+        providers = listOf(
+            ProviderConfig(
+                id = "p1",
+                name = "Claude 官方",
+                type = ProviderType.ANTHROPIC,
+                baseUrl = "https://api.anthropic.com",
+                model = "claude-3-7-sonnet"
+            )
+        )
+    )
+    AgentTheme(themeMode = "dark") {
+        ProvidersContent(
+            config = sampleConfig,
+            onOpenDrawer = {},
+            onAddProvider = {},
+            onSelectProvider = {},
+            onEditProvider = {},
+            onDeleteProvider = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "Providers - Empty")
+@Composable
+private fun ProvidersEmptyPreview() {
+    AgentTheme(themeMode = "light") {
+        ProvidersContent(
+            config = AppConfig(providers = emptyList()),
+            onOpenDrawer = {},
+            onAddProvider = {},
+            onSelectProvider = {},
+            onEditProvider = {},
+            onDeleteProvider = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "Provider Edit - Light")
+@Composable
+private fun ProviderEditPreviewLight() {
+    val sample = ProviderConfig(
+        id = "p1",
+        name = "Anthropic Claude",
+        type = ProviderType.ANTHROPIC,
+        baseUrl = "https://api.anthropic.com",
+        model = "claude-3-7-sonnet",
+        models = listOf("claude-3-7-sonnet", "claude-3-5-haiku")
+    )
+    AgentTheme(themeMode = "light") {
+        ProviderEditContent(
+            isNew = false,
+            initialConfig = sample,
+            testing = false,
+            testResult = "✅ 连接成功，模型响应正常",
+            fetchingModels = false,
+            fetchedModels = listOf("claude-3-7-sonnet", "claude-3-5-haiku"),
+            fetchError = null,
+            onBack = {},
+            onSave = {},
+            onTest = {},
+            onFetchModels = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "Provider Edit - Dark")
+@Composable
+private fun ProviderEditPreviewDark() {
+    AgentTheme(themeMode = "dark") {
+        ProviderEditContent(
+            isNew = true,
+            initialConfig = null,
+            testing = false,
+            testResult = null,
+            fetchingModels = false,
+            fetchedModels = null,
+            fetchError = null,
+            onBack = {},
+            onSave = {},
+            onTest = {},
+            onFetchModels = {}
+        )
+    }
 }

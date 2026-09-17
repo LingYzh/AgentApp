@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -34,11 +35,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,8 +53,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.example.myapplication.ui.theme.AgentTheme
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -60,6 +66,9 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
 import com.example.myapplication.AgentApp
 import com.example.myapplication.Routes
+import com.example.myapplication.safeNavigateDirect
+import com.example.myapplication.safePopBackStack
+import com.example.myapplication.ui.theme.ExpressiveTokens
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -130,50 +139,96 @@ fun FilesScreen(navController: NavHostController, openDrawer: () -> Unit) {
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { vm.import(it) } }
 
+    FilesContent(
+        files = files,
+        onOpenDrawer = openDrawer,
+        onUpload = { picker.launch(arrayOf("*/*")) },
+        onSelectFile = { path -> navController.safeNavigateDirect(Routes.fileView(path)) },
+        onDeleteFile = { path -> vm.delete(path) },
+        snackbarHostState = snackbar
+    )
+}
+
+/**
+ * 文件工作区列表纯 UI 组件
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FilesContent(
+    files: List<Pair<String, Long>>,
+    onOpenDrawer: () -> Unit,
+    onUpload: () -> Unit,
+    onSelectFile: (String) -> Unit,
+    onDeleteFile: (String) -> Unit,
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() }
+) {
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("文件工作区") },
                 navigationIcon = {
-                    IconButton(onClick = openDrawer) { Icon(Icons.Filled.Menu, "菜单") }
-                }
+                    IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "菜单") }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface
+                )
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { picker.launch(arrayOf("*/*")) }) {
+            FloatingActionButton(onClick = onUpload) {
                 Icon(Icons.Filled.UploadFile, "上传文件")
             }
         }
     ) { padding ->
         if (files.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("工作区为空。Agent 生成的文件会出现在这里，也可以点右下角上传。",
+                Text(
+                    "工作区为空。Agent 生成的文件会出现在这里，也可以点右下角上传。",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(32.dp))
+                    modifier = Modifier.padding(32.dp)
+                )
             }
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(8.dp),
+                contentPadding = PaddingValues(
+                    start = ExpressiveTokens.ScreenHorizontalPadding,
+                    top = 8.dp,
+                    end = ExpressiveTokens.ScreenHorizontalPadding,
+                    bottom = ExpressiveTokens.FabSafeBottomPadding
+                ),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(files, key = { it.first }) { (path, size) ->
-                    Card(Modifier.fillMaxWidth().clickable {
-                        navController.navigate(Routes.fileView(path))
-                    }) {
+                    Card(
+                        shape = ExpressiveTokens.CardShape,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                        ),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            onSelectFile(path)
+                        }
+                    ) {
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Filled.FileOpen, null,
-                                tint = MaterialTheme.colorScheme.primary)
+                            Icon(
+                                Icons.Filled.FileOpen, null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
                             Column(Modifier.weight(1f).padding(start = 12.dp)) {
                                 Text(path, style = MaterialTheme.typography.titleSmall)
-                                Text(formatSize(size), style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    formatSize(size), style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
-                            IconButton(onClick = { vm.delete(path) }) {
+                            IconButton(onClick = { onDeleteFile(path) }) {
                                 Icon(Icons.Filled.Delete, "删除")
                             }
                         }
@@ -191,8 +246,6 @@ fun FileViewScreen(navController: NavHostController, path: String) {
     val context = LocalContext.current
     var content by remember { mutableStateOf<String?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    var editing by remember { mutableStateOf(false) }
-    var editBuffer by remember { mutableStateOf("") }
 
     val isImage = remember(path) {
         path.substringAfterLast('.', "").lowercase() in
@@ -210,12 +263,61 @@ fun FileViewScreen(navController: NavHostController, path: String) {
         }
     }
 
+    val imageFile = remember(path) { if (isImage) app.store.workspaceFile(path) else null }
+
+    FileViewContent(
+        path = path,
+        content = content,
+        loadError = loadError,
+        isImage = isImage,
+        imageModel = imageFile,
+        onBack = { navController.safePopBackStack() },
+        onSave = { newContent ->
+            app.store.writeWorkspace(path, newContent)
+            content = newContent
+        },
+        onShare = {
+            runCatching {
+                val file = app.store.workspaceFile(path)
+                val uri = FileProvider.getUriForFile(
+                    context, "${context.packageName}.fileprovider", file
+                )
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = if (isImage) "image/*" else "text/plain"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(intent, "分享文件"))
+            }
+        }
+    )
+}
+
+/**
+ * 文件查看/编辑纯 UI 组件
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FileViewContent(
+    path: String,
+    content: String?,
+    loadError: String?,
+    isImage: Boolean,
+    imageModel: Any?,
+    onBack: () -> Unit,
+    onSave: (String) -> Unit,
+    onShare: () -> Unit,
+    initialEditing: Boolean = false
+) {
+    var editing by remember { mutableStateOf(initialEditing) }
+    var editBuffer by remember(content) { mutableStateOf(content ?: "") }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(path, maxLines = 1) },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
                     }
                 },
@@ -223,63 +325,68 @@ fun FileViewScreen(navController: NavHostController, path: String) {
                     if (content != null && !isImage) {
                         IconButton(onClick = {
                             if (editing) {
-                                app.store.writeWorkspace(path, editBuffer)
-                                content = editBuffer
+                                onSave(editBuffer)
                                 editing = false
                             } else {
-                                editBuffer = content ?: ""
+                                editBuffer = content
                                 editing = true
                             }
                         }) {
                             Icon(if (editing) Icons.Filled.Save else Icons.Filled.Edit, "编辑/保存")
                         }
                     }
-                    IconButton(onClick = {
-                        runCatching {
-                            val file = app.store.workspaceFile(path)
-                            val uri = FileProvider.getUriForFile(
-                                context, "${context.packageName}.fileprovider", file
-                            )
-                            val intent = Intent(Intent.ACTION_SEND).apply {
-                                type = if (isImage) "image/*" else "text/plain"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            context.startActivity(Intent.createChooser(intent, "分享文件"))
-                        }
-                    }) { Icon(Icons.Filled.Share, "分享") }
-                }
+                    IconButton(onClick = onShare) {
+                        Icon(Icons.Filled.Share, "分享")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                )
             )
         }
     ) { padding ->
         when {
             isImage -> {
-                val file = remember(path) { app.store.workspaceFile(path) }
                 Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                     coil.compose.AsyncImage(
-                        model = file,
+                        model = imageModel,
                         contentDescription = path,
                         modifier = Modifier.fillMaxSize().padding(8.dp),
                         contentScale = androidx.compose.ui.layout.ContentScale.Fit
                     )
                 }
             }
-            loadError != null -> Box(Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center) {
-                Text("无法预览：$loadError\n（可尝试分享后用其他应用打开）",
-                    color = MaterialTheme.colorScheme.error)
+            loadError != null -> Box(
+                Modifier.fillMaxSize().padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "无法预览：$loadError\n（可尝试分享后用其他应用打开）",
+                    color = MaterialTheme.colorScheme.error
+                )
             }
             editing -> OutlinedTextField(
                 value = editBuffer,
                 onValueChange = { editBuffer = it },
-                modifier = Modifier.fillMaxSize().padding(padding).padding(8.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .imePadding()
+                    .padding(8.dp),
                 textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
             )
             content != null -> SelectionContainer {
                 Text(
-                    content!!,
-                    modifier = Modifier.fillMaxSize().padding(padding)
-                        .verticalScroll(rememberScrollState()).padding(16.dp),
+                    content,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp)
+                        .padding(bottom = 24.dp),
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace
                 )
@@ -295,4 +402,95 @@ private fun formatSize(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"
     bytes < 1024 * 1024 -> "${bytes / 1024} KB"
     else -> "${bytes / 1024 / 1024} MB"
+}
+
+@Preview(showBackground = true, name = "Files - Light")
+@Composable
+private fun FilesPreviewLight() {
+    val sampleFiles = listOf(
+        "todo_list.md" to 1420L,
+        "agent_script.py" to 8520L,
+        "config.json" to 420L
+    )
+    AgentTheme(themeMode = "light") {
+        FilesContent(
+            files = sampleFiles,
+            onOpenDrawer = {},
+            onUpload = {},
+            onSelectFile = {},
+            onDeleteFile = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "Files - Dark")
+@Composable
+private fun FilesPreviewDark() {
+    val sampleFiles = listOf(
+        "output.txt" to 2560L
+    )
+    AgentTheme(themeMode = "dark") {
+        FilesContent(
+            files = sampleFiles,
+            onOpenDrawer = {},
+            onUpload = {},
+            onSelectFile = {},
+            onDeleteFile = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "Files - Empty")
+@Composable
+private fun FilesEmptyPreview() {
+    AgentTheme(themeMode = "light") {
+        FilesContent(
+            files = emptyList(),
+            onOpenDrawer = {},
+            onUpload = {},
+            onSelectFile = {},
+            onDeleteFile = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "File View Text - Light")
+@Composable
+private fun FileViewTextPreviewLight() {
+    val textContent = """
+        # Agent 工作笔记
+        - 已成功部署核心能力
+        - 准备为主人的任务执行全面优化
+        - 状态：侍奉就绪 ❤
+    """.trimIndent()
+    AgentTheme(themeMode = "light") {
+        FileViewContent(
+            path = "notes.md",
+            content = textContent,
+            loadError = null,
+            isImage = false,
+            imageModel = null,
+            onBack = {},
+            onSave = {},
+            onShare = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "File View Editing - Dark")
+@Composable
+private fun FileViewEditingPreviewDark() {
+    AgentTheme(themeMode = "dark") {
+        FileViewContent(
+            path = "script.py",
+            content = "print('Hello Master nya~')",
+            loadError = null,
+            isImage = false,
+            imageModel = null,
+            onBack = {},
+            onSave = {},
+            onShare = {},
+            initialEditing = true
+        )
+    }
 }

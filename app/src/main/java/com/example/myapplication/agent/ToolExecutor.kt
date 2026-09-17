@@ -68,9 +68,10 @@ class ToolExecutor(
                     "以下是 Skill '${arg("name")}' 的指令，请遵循执行：\n\n$body"
                 }
                 Tools.SAVE_SKILL -> {
-                    val skillName = arg("name")
+                    val rawName = arg("name")
+                    val skillName = com.example.myapplication.ui.skills.formatKebabCase(rawName).ifBlank { "unnamed-skill" }
                     store.saveSkill(skillName, arg("description"), arg("content"))
-                    "已保存 Skill '$skillName'"
+                    "已成功保存 Skill '$skillName'（路径：skills/$skillName/SKILL.md，已自动规范为标准目录包，后续或后续对话可直接通过 use_skill 加载调用）"
                 }
                 Tools.RUN_SUBAGENT -> {
                     val runner = onRunSubagent ?: return "错误: 当前上下文不允许调用子代理"

@@ -43,9 +43,11 @@ class AgentEngine(
         callbacks: Callbacks = Callbacks()
     ) {
         val provider = providerFactory.create(config.type)
+        val effectiveAllowedTools = allowedTools
+            ?: agentProfile?.tools?.takeIf { it.isNotEmpty() }?.toSet()
         val executor = ToolExecutor(
             store = store,
-            allowedTools = allowedTools,
+            allowedTools = effectiveAllowedTools,
             onRunSubagent = if (depth == 0 && subagentRunner != null) {
                 { task, providerName, model -> subagentRunner.run(task, providerName, model, config) }
             } else null
@@ -157,6 +159,9 @@ class AgentEngine(
         }
         appendLine("- 工作区文件：生成的文件保存在工作区，用户可在应用的文件页查看。")
         appendLine("- 长期记忆：重要信息（用户偏好、项目状态、关键结论）主动用 save_memory 保存；不确定时用 search_memory 检索。")
+        if (Tools.SAVE_SKILL in availableToolNames) {
+            appendLine("- 技能沉淀：当你发现某种复杂任务流程、标准化 SOP 或多次复用的提示词范式可被固化时，或者用户要求你学习/掌握某项新技能时，主动调用 save_skill 创建新技能（会自动生成标准目录包），供后续或其它对话复用。")
+        }
         val skills = store.listSkills()
         if (skills.isNotEmpty() && Tools.USE_SKILL in availableToolNames) {
             appendLine()

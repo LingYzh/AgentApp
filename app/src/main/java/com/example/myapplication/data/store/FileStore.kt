@@ -1,12 +1,21 @@
 package com.example.myapplication.data.store
 
+import com.example.myapplication.data.model.AgentProfile
 import com.example.myapplication.data.model.AppConfig
 import com.example.myapplication.data.model.Conversation
+import com.example.myapplication.data.model.DefaultAgents
 import com.example.myapplication.data.model.MemoryEntry
 import com.example.myapplication.data.model.SkillMeta
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
 /**
  * 纯文件存储层。所有数据保存在应用私有目录下：
@@ -27,6 +36,7 @@ class FileStore(private val root: File) {
     val skillsDir = File(root, "skills")
     val workspaceDir = File(root, "workspace")
     val backupsDir = File(root, "backups")
+    val avatarsDir = File(root, "avatars")
 
     init {
         init()
@@ -39,6 +49,7 @@ class FileStore(private val root: File) {
         skillsDir.mkdirs()
         workspaceDir.mkdirs()
         backupsDir.mkdirs()
+        avatarsDir.mkdirs()
     }
 
     // ---------- 全局配置 ----------
@@ -55,13 +66,32 @@ class FileStore(private val root: File) {
 
     private val agentsFile = File(root, "agents.json")
 
-    fun loadAgents(): List<com.example.myapplication.data.model.AgentProfile> =
-        runCatching {
-            json.decodeFromString<List<com.example.myapplication.data.model.AgentProfile>>(agentsFile.readText())
+    fun loadAgents(): List<AgentProfile> {
+        if (!agentsFile.exists()) {
+            return DefaultAgents.DEFAULT_PROFILES.also { saveAgents(it) }
+        }
+        return runCatching {
+            json.decodeFromString<List<AgentProfile>>(agentsFile.readText())
         }.getOrDefault(emptyList())
+    }
 
-    fun saveAgents(list: List<com.example.myapplication.data.model.AgentProfile>) {
+    fun saveAgents(list: List<AgentProfile>) {
         agentsFile.writeText(json.encodeToString(list))
+    }
+
+    fun resetAgentsToDefault(): List<AgentProfile> {
+        return DefaultAgents.DEFAULT_PROFILES.also { saveAgents(it) }
+    }
+
+    fun saveAgentAvatar(agentId: String, inputStream: java.io.InputStream): String {
+        avatarsDir.mkdirs()
+        val file = File(avatarsDir, "$agentId.png")
+        file.outputStream().use { out -> inputStream.copyTo(out) }
+        return file.absolutePath
+    }
+
+    fun deleteAgentAvatar(agentId: String) {
+        File(avatarsDir, "$agentId.png").delete()
     }
 
     // ---------- 对话 ----------
@@ -138,21 +168,56 @@ class FileStore(private val root: File) {
         }
     }
 
-    // ---------- Skills ----------
+    // ---------- Skills（统一纯目录包格式：skills/{name}/SKILL.md） ----------
 
-    private fun skillFile(name: String) = File(skillsDir, "${sanitizeFileName(name)}.md")
+    fun skillDir(name: String): File = File(skillsDir, sanitizeFileName(name))
 
-    /** 解析 frontmatter（--- name/description ---）+ 正文 */
-    fun listSkills(): List<SkillMeta> =
-        skillsDir.listFiles { f -> f.extension == "md" }
-            ?.mapNotNull { f ->
-                val text = runCatching { f.readText() }.getOrNull() ?: return@mapNotNull null
+    fun skillFile(name: String): File {
+        val dir = skillDir(name)
+        val standard = File(dir, "SKILL.md")
+        if (standard.exists()) return standard
+        val lower = File(dir, "skill.md")
+        if (lower.exists()) return lower
+        return standard
+    }
+
+    /** 平滑迁移旧版单文件 skills（如 skills/xxx.md -> skills/xxx/SKILL.md） */
+    private fun migrateOldSkillsIfNeed() {
+        skillsDir.listFiles { f -> f.isFile && f.extension == "md" }?.forEach { oldFile ->
+            val name = oldFile.nameWithoutExtension
+            val dir = skillDir(name)
+            if (!dir.exists()) {
+                dir.mkdirs()
+                val targetFile = File(dir, "SKILL.md")
+                oldFile.copyTo(targetFile, overwrite = true)
+            }
+            oldFile.delete()
+        }
+    }
+
+    /** 扫描 skills 目录下所有目录包，解析 SKILL.md 的 Frontmatter */
+    fun listSkills(): List<SkillMeta> {
+        migrateOldSkillsIfNeed()
+        return skillsDir.listFiles { f -> f.isDirectory }
+            ?.mapNotNull { dir ->
+                val skillMd = File(dir, "SKILL.md").takeIf { it.exists() }
+                    ?: File(dir, "skill.md").takeIf { it.exists() }
+                    ?: return@mapNotNull null
+                val text = runCatching { skillMd.readText() }.getOrNull() ?: return@mapNotNull null
                 val (meta, _) = parseSkill(text)
-                val name = meta["name"] ?: f.nameWithoutExtension
-                SkillMeta(name = name, description = meta["description"] ?: "")
+                val name = meta["name"]?.ifBlank { null } ?: dir.name
+                val version = meta["version"]?.ifBlank { null } ?: "1.0.0"
+                val license = meta["license"]?.ifBlank { null } ?: "MIT"
+                SkillMeta(
+                    name = name,
+                    description = meta["description"] ?: "",
+                    version = version,
+                    license = license
+                )
             }
             ?.sortedBy { it.name }
             ?: emptyList()
+    }
 
     fun readSkill(name: String): String? =
         skillFile(name).takeIf { it.exists() }?.readText()
@@ -160,20 +225,31 @@ class FileStore(private val root: File) {
     fun readSkillBody(name: String): String? =
         readSkill(name)?.let { parseSkill(it).second }
 
-    fun saveSkill(name: String, description: String, body: String) {
+    fun saveSkill(
+        name: String,
+        description: String,
+        body: String,
+        version: String = "1.0.0",
+        license: String = "MIT"
+    ) {
+        val dir = skillDir(name)
+        dir.mkdirs()
         val text = buildString {
             appendLine("---")
             appendLine("name: $name")
             appendLine("description: $description")
+            if (version.isNotBlank()) appendLine("version: $version")
+            if (license.isNotBlank()) appendLine("license: $license")
             appendLine("---")
             appendLine()
-            append(body)
+            append(body.trim())
+            appendLine()
         }
-        skillFile(name).writeText(text)
+        File(dir, "SKILL.md").writeText(text)
     }
 
     fun deleteSkill(name: String) {
-        skillFile(name).delete()
+        skillDir(name).deleteRecursively()
     }
 
     /** 返回 (frontmatter map, body) */
@@ -190,6 +266,162 @@ class FileStore(private val root: File) {
         }
         val body = lines.drop(i + 1).joinToString("\n").trim()
         return meta to body
+    }
+
+    /**
+     * 导入基于 my-skills-collections release 规范的通用 ZIP 包。
+     * 支持导入单个 Skill 的 Release 包（根目录或子目录下包含 SKILL.md），
+     * 或包含多个 Skill 目录的合集备份包。
+     * 解包并规范化至 skills/{name}/ 纯目录包结构。
+     */
+    fun importSkillZip(inputStream: InputStream): List<SkillMeta> {
+        val tempDir = File(root, "temp_skill_import_${System.currentTimeMillis()}")
+        tempDir.mkdirs()
+        try {
+            ZipInputStream(inputStream).use { zis ->
+                var entry: ZipEntry? = zis.nextEntry
+                while (entry != null) {
+                    val entryName = entry.name.replace('\\', '/')
+                    // 忽略 macOS 与插件特定元数据
+                    if (!entryName.startsWith("__MACOSX") &&
+                        !entryName.contains(".codex-plugin/") &&
+                        !entryName.contains(".claude-plugin/")
+                    ) {
+                        val outFile = File(tempDir, entryName).canonicalFile
+                        if (!outFile.path.startsWith(tempDir.canonicalPath)) {
+                            throw SecurityException("ZIP 包含越界路径: $entryName")
+                        }
+                        if (entry.isDirectory) {
+                            outFile.mkdirs()
+                        } else {
+                            outFile.parentFile?.mkdirs()
+                            FileOutputStream(outFile).use { fos -> zis.copyTo(fos) }
+                        }
+                    }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
+                }
+            }
+
+            // 在解压产物中查找所有 SKILL.md
+            val skillMdFiles = tempDir.walkTopDown()
+                .filter { it.isFile && it.name.equals("SKILL.md", ignoreCase = true) }
+                .toList()
+
+            if (skillMdFiles.isEmpty()) {
+                throw IllegalArgumentException("ZIP 中未找到 SKILL.md，不是合法的通用 Skill 包")
+            }
+
+            val imported = mutableListOf<SkillMeta>()
+
+            for (skillMdFile in skillMdFiles) {
+                val text = skillMdFile.readText()
+                val (meta, _) = parseSkill(text)
+                val skillSourceDir = skillMdFile.parentFile ?: tempDir
+                val name = meta["name"]?.ifBlank { null }
+                    ?: skillSourceDir.name.takeIf { it != tempDir.name }
+                    ?: "unnamed_skill"
+                val cleanName = sanitizeFileName(name)
+
+                val targetDir = skillDir(cleanName)
+                if (targetDir.exists()) {
+                    targetDir.deleteRecursively()
+                }
+                targetDir.mkdirs()
+
+                // 如果 skillMd 直接在 tempDir 根下（单包），复制 tempDir 下除其他子 skill 目录外的文件
+                if (skillSourceDir == tempDir) {
+                    tempDir.listFiles()?.forEach { f ->
+                        if (f.isFile) {
+                            f.copyTo(File(targetDir, f.name), overwrite = true)
+                        } else if (f.isDirectory && skillMdFiles.none { it.canonicalPath.startsWith(f.canonicalPath) }) {
+                            f.copyRecursively(File(targetDir, f.name), overwrite = true)
+                        }
+                    }
+                } else {
+                    skillSourceDir.copyRecursively(targetDir, overwrite = true)
+                }
+
+                // 规范化主入口文件名固定为 SKILL.md
+                val currentMd = File(targetDir, skillMdFile.name)
+                if (currentMd.name != "SKILL.md" && currentMd.exists()) {
+                    currentMd.renameTo(File(targetDir, "SKILL.md"))
+                }
+
+                val version = meta["version"]?.ifBlank { null } ?: "1.0.0"
+                val license = meta["license"]?.ifBlank { null } ?: "MIT"
+                imported.add(
+                    SkillMeta(
+                        name = cleanName,
+                        description = meta["description"] ?: "",
+                        version = version,
+                        license = license
+                    )
+                )
+            }
+
+            return imported
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    /**
+     * 将指定的 Skill 目录打包为标准通用 ZIP（根目录直接包含 SKILL.md 及附属资源）。
+     */
+    fun exportSkillZip(name: String): File {
+        val dir = skillDir(name)
+        require(dir.exists() && dir.isDirectory) { "Skill '$name' 不存在" }
+        val exportsDir = File(backupsDir, "exports").apply { mkdirs() }
+        val zipFile = File(exportsDir, "${name}.zip")
+        if (zipFile.exists()) zipFile.delete()
+
+        ZipOutputStream(FileOutputStream(zipFile)).use { zos ->
+            val rootPath = dir.canonicalFile.path
+            dir.walkTopDown().forEach { file ->
+                if (file.isFile) {
+                    val relPath = file.canonicalFile.path.removePrefix(rootPath)
+                        .trimStart(File.separatorChar)
+                        .replace(File.separatorChar, '/')
+                    val entry = ZipEntry(relPath)
+                    zos.putNextEntry(entry)
+                    FileInputStream(file).use { fis -> fis.copyTo(zos) }
+                    zos.closeEntry()
+                }
+            }
+        }
+        return zipFile
+    }
+
+    /**
+     * 导出本地所有 Skills 为一个全量集合备份 ZIP。
+     */
+    fun exportAllSkillsZip(): File {
+        val exportsDir = File(backupsDir, "exports").apply { mkdirs() }
+        val zipFile = File(exportsDir, "skills_all_collections.zip")
+        if (zipFile.exists()) zipFile.delete()
+
+        ZipOutputStream(FileOutputStream(zipFile)).use { zos ->
+            val skills = listSkills()
+            skills.forEach { skill ->
+                val dir = skillDir(skill.name)
+                if (dir.exists() && dir.isDirectory) {
+                    val rootPath = dir.canonicalFile.path
+                    dir.walkTopDown().forEach { file ->
+                        if (file.isFile) {
+                            val relPath = file.canonicalFile.path.removePrefix(rootPath)
+                                .trimStart(File.separatorChar)
+                                .replace(File.separatorChar, '/')
+                            val entry = ZipEntry("${skill.name}/$relPath")
+                            zos.putNextEntry(entry)
+                            FileInputStream(file).use { fis -> fis.copyTo(zos) }
+                            zos.closeEntry()
+                        }
+                    }
+                }
+            }
+        }
+        return zipFile
     }
 
     // ---------- 工作区文件 ----------
