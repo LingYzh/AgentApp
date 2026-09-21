@@ -6,10 +6,14 @@ import com.example.myapplication.data.model.Conversation
 import com.example.myapplication.data.model.ModelResolver
 import com.example.myapplication.data.model.ProviderConfig
 import com.example.myapplication.data.model.ProviderType
+import com.example.myapplication.data.model.contextWindowFor
 import com.example.myapplication.provider.ModelFetcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 class ModelResolverTest {
 
@@ -91,5 +95,36 @@ class ModelFetcherParseTest {
     fun `garbage json yields empty list`() {
         assertEquals(emptyList<String>(), ModelFetcher.parseOpenAiStyleModels("not json"))
         assertEquals(emptyList<String>(), ModelFetcher.parseGeminiModels("{}"))
+    }
+}
+
+class ProviderConfigSerializationTest {
+
+    @Test
+    fun `context window overrides persist only for their model`() {
+        val json = Json { encodeDefaults = false; ignoreUnknownKeys = true }
+        val original = ProviderConfig(
+            model = "gateway-coder",
+            contextWindowOverrides = mapOf("gateway-coder" to 131_072)
+        )
+        val restored = json.decodeFromString<ProviderConfig>(json.encodeToString(original))
+
+        assertEquals(131_072, restored.contextWindowFor())
+        assertNull(restored.contextWindowFor("another-model"))
+    }
+
+    @Test
+    fun `nonpositive imported context window is unknown`() {
+        assertNull(ProviderConfig(contextWindowOverrides = mapOf("m" to -1)).contextWindowFor("m"))
+    }
+
+    @Test
+    fun `optional output cap survives provider config serialization`() {
+        val json = Json { encodeDefaults = false; ignoreUnknownKeys = true }
+        val restored = json.decodeFromString<ProviderConfig>(
+            json.encodeToString(ProviderConfig(model = "gateway", maxOutputTokens = 65_536))
+        )
+
+        assertEquals(65_536, restored.maxOutputTokens)
     }
 }

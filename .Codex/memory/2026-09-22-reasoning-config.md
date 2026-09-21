@@ -1,0 +1,16 @@
+# Reasoning configuration
+
+> Historical first implementation. The model-ID restrictions below are superseded by
+> [provider-context-v6](2026-09-22-provider-context-v6.md) and
+> [context-compaction](2026-09-22-context-compaction.md): OpenAI-compatible and Anthropic now
+> expose all six requested efforts, with per-conversation live overrides.
+
+- `ProviderConfig.reasoningEffort` is nullable. `null` is the compatibility-safe default: existing configuration decodes unchanged and no reasoning field is sent.
+- `reasoningSupportFor` is the single model/protocol classifier. It exposes a user-facing explanation and only permits documented model generations. Unknown OpenAI-compatible models may explicitly use low/medium/high `reasoning_effort`; the upstream validates that opt-in. Custom templates are untouched.
+- OpenAI uses Chat Completions `reasoning_effort`; it does not introduce a Responses API request shape. Effort is model-specific: o1/o3 expose low/medium/high, while the initial GPT-5 family does not accept none or xhigh. GPT-5.1/5.2 reject temperature whenever effort is not none; initial GPT-5/mini/nano reject temperature entirely. See [OpenAI model guidance](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.2).
+- Claude 4.5 and recognised earlier-thinking models use manual `thinking.enabled` with an app-defined budget. Recognised Claude 4.6 models use `thinking.adaptive` plus `output_config.effort` (low/medium/high/max; not xhigh). Anthropic thinking requests omit temperature because the API rejects that combination. Unknown Claude aliases are left unconfigured rather than guessing their generation; the current selector does not enumerate every later model.
+- Gemini 3 uses `generationConfig.thinkingConfig.thinkingLevel`; Gemini 2.5 uses `thinkingBudget`. Unknown Gemini aliases deliberately receive no thinking configuration.
+- `ReasoningRequestTest` verifies the outgoing JSON shape, compatibility omission, known unsupported models, Anthropic temperature conflict, and the Gemini 2.5/3 protocol split.
+- `ChatMessage.providerBlocks` stores opaque same-protocol assistant blocks. Anthropic replays thinking signatures and redacted thinking unchanged; Gemini replays `thoughtSignature` with its original part. The parser publishes complete snapshots after provider chunks/blocks so a tool turn cannot lose a completed signature if a later read ends. These values are never displayed or sent to another protocol. See [Claude thinking signatures](https://platform.claude.com/docs/en/about-claude/models/extended-thinking-models) and [Gemini thought signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures).
+- Root review corrected null-temperature validation, preserved signature-only Gemini parts and equal repeated calls, and rejected unfinished thinking/malformed tool arguments rather than treating incomplete signatures as valid. User edits and runtime stop/error notes synchronize visible text in stored protocol blocks without rewriting opaque thinking/tool data.
+- Final validation: 155 JVM tests, 154 passed, one Windows symlink-creation test skipped; assembleDebug and lintDebug succeeded. No paid upstream requests or phone UI tests were made.

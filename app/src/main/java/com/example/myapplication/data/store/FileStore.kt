@@ -13,6 +13,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -50,6 +51,67 @@ class FileStore(private val root: File) {
         workspaceDir.mkdirs()
         backupsDir.mkdirs()
         avatarsDir.mkdirs()
+    }
+
+    /**
+     * Managed data roots are intentionally separate from user-chosen workspace scopes.
+     * Every direct child is still canonicalized so a malformed index, name, or symlink
+     * cannot turn a dedicated memory/Skill operation into an arbitrary file operation.
+     */
+    /** Accept a trusted root's canonical alias, while requiring the root itself to be a directory. */
+    private fun managedDirectory(directory: File, label: String): File {
+        val absolute = directory.absoluteFile
+        val canonical = absolute.canonicalFile
+        check(canonical.exists() && canonical.isDirectory) { "${label}目录无效或被重定向" }
+        return canonical
+    }
+
+    /** memory/ and skills/ must be direct children of the trusted application root. */
+    private fun managedStoreRoot(directory: File, label: String): File {
+        val expected = File(root.canonicalFile, directory.name).absoluteFile
+        val canonical = managedDirectory(directory, label)
+        check(canonical == expected) { "${label}目录无效或被符号链接重定向" }
+        return canonical
+    }
+
+    private fun managedChild(root: File, name: String, label: String): File {
+        require(name.isNotBlank() && name !in setOf(".", "..") &&
+            !name.contains('/') && !name.contains('\\')) { "${label}名称无效" }
+        val canonicalRoot = managedDirectory(root, label)
+        val child = File(canonicalRoot, name).absoluteFile
+        val canonical = child.canonicalFile
+        check(canonical.parentFile == canonicalRoot && canonical == child) { "${label}路径越界或被符号链接重定向" }
+        return canonical
+    }
+
+    private fun rejectSymbolicLinksInTree(directory: File, label: String) {
+        directory.walkTopDown().onEnter { candidate ->
+            check(candidate.canonicalFile == candidate.absoluteFile) { "${label}包含符号链接，拒绝删除" }
+            true
+        }.forEach { candidate ->
+            check(candidate.canonicalFile == candidate.absoluteFile) { "${label}包含符号链接，拒绝删除" }
+        }
+    }
+
+    /** Replace a managed file's directory entry instead of mutating a possible hard link. */
+    private fun writeManagedFile(target: File, content: String) {
+        val parent = managedDirectory(target.parentFile ?: error("托管文件缺少父目录"), "托管文件")
+        val temporary = File.createTempFile(".managed-", ".tmp", parent)
+        val backup = File(parent, ".managed-backup-${UUID.randomUUID()}")
+        try {
+            temporary.writeText(content)
+            if (!temporary.renameTo(target)) {
+                val existed = target.exists()
+                check(!existed || target.renameTo(backup)) { "无法替换托管文件" }
+                if (!temporary.renameTo(target)) {
+                    if (existed) check(backup.renameTo(target)) { "托管文件写入失败，原文件保留在 ${backup.path}" }
+                    error("托管文件写入失败")
+                }
+                backup.delete()
+            }
+        } finally {
+            temporary.delete()
+        }
     }
 
     // ---------- 全局配置 ----------
@@ -96,6 +158,7 @@ class FileStore(private val root: File) {
 
     // ---------- 对话 ----------
 
+    @Synchronized
     fun listConversations(): List<Conversation> =
         conversationsDir.listFiles { f -> f.extension == "json" }
             ?.mapNotNull { f ->
@@ -104,34 +167,129 @@ class FileStore(private val root: File) {
             ?.sortedByDescending { it.messages.lastOrNull()?.timestamp ?: it.createdAt }
             ?: emptyList()
 
+    /**
+     * 返回可以在会话根列表中展示的会话。
+     *
+     * 子代理只有在父会话文件仍然存在且可以被解析时才会被隐藏；旧数据或被移动过的
+     * 子代理因此会作为普通根会话保留，避免把它变成用户无法找到的记录。
+     */
+    fun listRootConversations(): List<Conversation> {
+        val all = listConversations()
+        val byId = all.associateBy { it.id }
+        return all.filter { conversation ->
+            val firstParent = conversation.parentConversationId ?: return@filter true
+            var parentId: String? = firstParent
+            val visited = mutableSetOf(conversation.id)
+            var directParent = true
+            while (parentId != null) {
+                // A direct parent is enough to hide this record from the root list. Ancestor
+                // gaps do not make the child disappear; only a graph cycle is promoted back
+                // to the root list so corrupt data remains reachable.
+                val parent = byId[parentId] ?: return@filter directParent
+                // A corrupt/self-referential graph must remain visible rather than hide
+                // every node in the cycle from the root list.
+                if (!visited.add(parent.id)) return@filter true
+                parentId = parent.parentConversationId
+                directParent = false
+            }
+            false
+        }
+    }
+
+    /** 返回直接归属于指定父会话的子代理记录。 */
+    fun listChildConversations(parentConversationId: String): List<Conversation> =
+        listConversations().filter { it.parentConversationId == parentConversationId }
+
+    @Synchronized
     fun loadConversation(id: String): Conversation? {
-        val f = File(conversationsDir, "$id.json")
+        val f = conversationFile(id)
         if (!f.exists()) return null
         return runCatching { json.decodeFromString<Conversation>(f.readText()) }.getOrNull()
     }
 
+    /** 与详情轮询共用锁，避免读取正在写入的 JSON。 */
+    @Synchronized
     fun saveConversation(c: Conversation) {
-        File(conversationsDir, "${c.id}.json").writeText(json.encodeToString(c))
+        conversationFile(c.id).writeText(json.encodeToString(c))
     }
 
+    @Synchronized
     fun deleteConversation(id: String) {
-        File(conversationsDir, "$id.json").delete()
+        // Snapshot first so a malformed parent graph cannot make deletion loop forever.
+        val all = listConversations()
+        val deletedIds = linkedSetOf(id)
+        var changed = true
+        while (changed) {
+            changed = false
+            all.forEach { conversation ->
+                if (conversation.parentConversationId in deletedIds && deletedIds.add(conversation.id)) {
+                    changed = true
+                }
+            }
+        }
+        deletedIds.forEach { conversationFile(it).delete() }
+    }
+
+    /**
+     * Mark child agents that were running when the process stopped as cancelled.
+     * This is deliberately explicit rather than part of list operations, so a live child
+     * is never changed merely because the root list is refreshed.
+     */
+    fun recoverInterruptedSubagents(): Int {
+        val running = listConversations().filter {
+            it.parentConversationId != null && it.executionStatus == "running"
+        }
+        running.forEach {
+            it.executionStatus = "cancelled"
+            saveConversation(it)
+        }
+        return running.size
+    }
+
+    /** Resolve a conversation ID to a direct file below conversations/. */
+    private fun conversationFile(id: String): File {
+        require(id.isNotBlank()) { "会话 ID 不能为空" }
+        val directory = conversationsDir.canonicalFile
+        val file = File(directory, "$id.json").canonicalFile
+        if (file.parentFile != directory) {
+            throw SecurityException("会话 ID 路径越界: $id")
+        }
+        return file
     }
 
     // ---------- 记忆 ----------
 
-    private val memoryIndexFile get() = File(memoryDir, "index.json")
+    private val memoryIndexFile get() = managedChild(memoryRoot(), "index.json", "记忆索引")
+
+    private fun memoryRoot(): File = managedStoreRoot(memoryDir, "记忆")
+
+    private fun skillRoot(): File = managedStoreRoot(skillsDir, "Skill")
+
+    /** Memory IDs are storage keys, never paths supplied by a tool call. */
+    private fun memoryFile(id: String): File = managedChild(
+        memoryRoot(),
+        "${requireMemoryId(id)}.md",
+        "记忆正文"
+    )
+
+    private fun requireMemoryId(id: String): String {
+        require(MANAGED_ID.matches(id)) { "记忆 ID 无效" }
+        return id
+    }
+
+    private fun isMemoryId(id: String): Boolean = MANAGED_ID.matches(id)
 
     fun listMemories(): List<MemoryEntry> =
         runCatching {
             json.decodeFromString<List<MemoryEntry>>(memoryIndexFile.readText())
-        }.getOrDefault(emptyList())
+        }.getOrDefault(emptyList()).filter { isMemoryId(it.id) }
 
     private fun saveMemoryIndex(list: List<MemoryEntry>) {
-        memoryIndexFile.writeText(json.encodeToString(list))
+        writeManagedFile(memoryIndexFile, json.encodeToString(list))
     }
 
     fun saveMemory(title: String, content: String, id: String? = null): MemoryEntry {
+        id?.let(::requireMemoryId)
         val list = listMemories().toMutableList()
         val entry = if (id != null) {
             list.firstOrNull { it.id == id }?.also {
@@ -143,17 +301,20 @@ class FileStore(private val root: File) {
         }
         list.removeAll { it.id == entry.id }
         list.add(entry)
+        val bodyFile = memoryFile(entry.id)
         saveMemoryIndex(list)
-        File(memoryDir, "${entry.id}.md").writeText(content)
+        writeManagedFile(bodyFile, content)
         return entry
     }
 
     fun readMemory(id: String): String? =
-        File(memoryDir, "$id.md").takeIf { it.exists() }?.readText()
+        if (!isMemoryId(id)) null else memoryFile(id).takeIf { it.exists() }?.readText()
 
     fun deleteMemory(id: String) {
+        requireMemoryId(id)
+        val body = memoryFile(id)
         saveMemoryIndex(listMemories().filterNot { it.id == id })
-        File(memoryDir, "$id.md").delete()
+        body.delete()
     }
 
     /** 简单子串检索（大小写不敏感），返回条目与正文 */
@@ -170,38 +331,47 @@ class FileStore(private val root: File) {
 
     // ---------- Skills（统一纯目录包格式：skills/{name}/SKILL.md） ----------
 
-    fun skillDir(name: String): File = File(skillsDir, sanitizeFileName(name))
+    fun skillDir(name: String): File {
+        require(name.trim() !in setOf(".", "..")) { "Skill 名称不能为 . 或 .." }
+        return managedChild(skillRoot(), sanitizeFileName(name), "Skill")
+    }
 
     fun skillFile(name: String): File {
         val dir = skillDir(name)
-        val standard = File(dir, "SKILL.md")
+        if (!dir.exists()) return File(dir, "SKILL.md")
+        val standard = managedChild(managedDirectory(dir, "Skill"), "SKILL.md", "Skill 入口文件")
         if (standard.exists()) return standard
-        val lower = File(dir, "skill.md")
+        val lower = managedChild(managedDirectory(dir, "Skill"), "skill.md", "Skill 入口文件")
         if (lower.exists()) return lower
         return standard
     }
 
     /** 平滑迁移旧版单文件 skills（如 skills/xxx.md -> skills/xxx/SKILL.md） */
     private fun migrateOldSkillsIfNeed() {
-        skillsDir.listFiles { f -> f.isFile && f.extension == "md" }?.forEach { oldFile ->
+        val root = skillRoot()
+        root.listFiles { f ->
+            f.isFile && f.extension == "md" && f.canonicalFile == f.absoluteFile
+        }?.forEach { oldFile ->
+            val source = managedChild(root, oldFile.name, "旧版 Skill 文件")
             val name = oldFile.nameWithoutExtension
             val dir = skillDir(name)
             if (!dir.exists()) {
                 dir.mkdirs()
-                val targetFile = File(dir, "SKILL.md")
-                oldFile.copyTo(targetFile, overwrite = true)
+                val targetFile = managedChild(managedDirectory(dir, "Skill"), "SKILL.md", "Skill 入口文件")
+                source.copyTo(targetFile, overwrite = true)
             }
-            oldFile.delete()
+            source.delete()
         }
     }
 
     /** 扫描 skills 目录下所有目录包，解析 SKILL.md 的 Frontmatter */
     fun listSkills(): List<SkillMeta> {
         migrateOldSkillsIfNeed()
-        return skillsDir.listFiles { f -> f.isDirectory }
+        return skillRoot().listFiles { f -> f.isDirectory && f.canonicalFile == f.absoluteFile }
             ?.mapNotNull { dir ->
-                val skillMd = File(dir, "SKILL.md").takeIf { it.exists() }
-                    ?: File(dir, "skill.md").takeIf { it.exists() }
+                val root = runCatching { managedDirectory(dir, "Skill") }.getOrNull() ?: return@mapNotNull null
+                val skillMd = runCatching { managedChild(root, "SKILL.md", "Skill 入口文件") }.getOrNull()?.takeIf { it.exists() }
+                    ?: runCatching { managedChild(root, "skill.md", "Skill 入口文件") }.getOrNull()?.takeIf { it.exists() }
                     ?: return@mapNotNull null
                 val text = runCatching { skillMd.readText() }.getOrNull() ?: return@mapNotNull null
                 val (meta, _) = parseSkill(text)
@@ -234,6 +404,7 @@ class FileStore(private val root: File) {
     ) {
         val dir = skillDir(name)
         dir.mkdirs()
+        val root = managedDirectory(dir, "Skill")
         val text = buildString {
             appendLine("---")
             appendLine("name: $name")
@@ -245,11 +416,15 @@ class FileStore(private val root: File) {
             append(body.trim())
             appendLine()
         }
-        File(dir, "SKILL.md").writeText(text)
+        writeManagedFile(managedChild(root, "SKILL.md", "Skill 入口文件"), text)
     }
 
     fun deleteSkill(name: String) {
-        skillDir(name).deleteRecursively()
+        val dir = skillDir(name)
+        if (dir.exists()) {
+            rejectSymbolicLinksInTree(dir, "Skill")
+            dir.deleteRecursively()
+        }
     }
 
     /** 返回 (frontmatter map, body) */
@@ -277,6 +452,7 @@ class FileStore(private val root: File) {
     fun importSkillZip(inputStream: InputStream): List<SkillMeta> {
         val tempDir = File(root, "temp_skill_import_${System.currentTimeMillis()}")
         tempDir.mkdirs()
+        val tempRoot = tempDir.canonicalFile
         try {
             ZipInputStream(inputStream).use { zis ->
                 var entry: ZipEntry? = zis.nextEntry
@@ -287,8 +463,8 @@ class FileStore(private val root: File) {
                         !entryName.contains(".codex-plugin/") &&
                         !entryName.contains(".claude-plugin/")
                     ) {
-                        val outFile = File(tempDir, entryName).canonicalFile
-                        if (!outFile.path.startsWith(tempDir.canonicalPath)) {
+                        val outFile = File(tempRoot, entryName).canonicalFile
+                        if (outFile != tempRoot && !outFile.path.startsWith(tempRoot.path + File.separator)) {
                             throw SecurityException("ZIP 包含越界路径: $entryName")
                         }
                         if (entry.isDirectory) {
@@ -325,6 +501,7 @@ class FileStore(private val root: File) {
 
                 val targetDir = skillDir(cleanName)
                 if (targetDir.exists()) {
+                    rejectSymbolicLinksInTree(targetDir, "Skill")
                     targetDir.deleteRecursively()
                 }
                 targetDir.mkdirs()
@@ -372,8 +549,9 @@ class FileStore(private val root: File) {
     fun exportSkillZip(name: String): File {
         val dir = skillDir(name)
         require(dir.exists() && dir.isDirectory) { "Skill '$name' 不存在" }
+        rejectSymbolicLinksInTree(dir, "Skill")
         val exportsDir = File(backupsDir, "exports").apply { mkdirs() }
-        val zipFile = File(exportsDir, "${name}.zip")
+        val zipFile = File(exportsDir, "${dir.name}.zip")
         if (zipFile.exists()) zipFile.delete()
 
         ZipOutputStream(FileOutputStream(zipFile)).use { zos ->
@@ -406,6 +584,7 @@ class FileStore(private val root: File) {
             skills.forEach { skill ->
                 val dir = skillDir(skill.name)
                 if (dir.exists() && dir.isDirectory) {
+                    rejectSymbolicLinksInTree(dir, "Skill")
                     val rootPath = dir.canonicalFile.path
                     dir.walkTopDown().forEach { file ->
                         if (file.isFile) {
@@ -436,6 +615,7 @@ class FileStore(private val root: File) {
             require(directory.exists() && directory.isDirectory) {
                 "Skill '$name' 不存在"
             }
+            rejectSymbolicLinksInTree(directory, "Skill")
             sanitizeFileName(name) to directory
         }
         require(selected.map { it.first }.distinct().size == selected.size) {
@@ -449,7 +629,7 @@ class FileStore(private val root: File) {
         ZipOutputStream(FileOutputStream(zipFile)).use { zos ->
             selected.forEach { (entryRoot, directory) ->
                 val rootPath = directory.canonicalFile.path
-                val skillsRoot = skillsDir.canonicalFile.path + File.separator
+                val skillsRoot = skillRoot().path + File.separator
                 require(rootPath.startsWith(skillsRoot)) {
                     "Skill 目录越界: ${directory.name}"
                 }
@@ -522,6 +702,8 @@ class FileStore(private val root: File) {
     fun workspaceSize(relativePath: String): Long = workspaceFile(relativePath).length()
 
     companion object {
+        private val MANAGED_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
         fun sanitizeFileName(name: String): String =
             name.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifEmpty { "unnamed" }
     }

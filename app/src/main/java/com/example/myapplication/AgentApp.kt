@@ -3,9 +3,11 @@ package com.example.myapplication
 import android.app.Application
 import com.example.myapplication.agent.AgentEngine
 import com.example.myapplication.agent.SubagentRunner
+import com.example.myapplication.agent.SubagentRegistry
 import com.example.myapplication.data.backup.BackupManager
 import com.example.myapplication.data.backup.ConfigurationTransfer
 import com.example.myapplication.data.store.FileStore
+import com.example.myapplication.data.store.AttachmentStore
 import com.example.myapplication.provider.ModelFetcher
 import com.example.myapplication.provider.ProviderFactory
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,12 +15,16 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /** Application 类 + 手工 ServiceLocator（项目规模无需 DI 框架） */
 class AgentApp : Application() {
+    val subagentRegistry = SubagentRegistry()
+    val permissionCoordinator = com.example.myapplication.agent.PermissionCoordinator()
 
     lateinit var store: FileStore
         private set
     lateinit var providerFactory: ProviderFactory
         private set
     lateinit var modelFetcher: ModelFetcher
+        private set
+    lateinit var attachmentStore: AttachmentStore
         private set
     lateinit var backupManager: BackupManager
         private set
@@ -32,8 +38,27 @@ class AgentApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        com.example.myapplication.diagnostics.RuntimeDiagnostics.initialize(java.io.File(filesDir, "logs"))
+        com.example.myapplication.diagnostics.RuntimeDiagnostics.sharedStorageAccess = {
+            com.example.myapplication.ui.settings.hasSharedStorageAccess(this)
+        }
+        com.example.myapplication.diagnostics.RuntimeDiagnostics.event("app_start",
+            "sdk" to android.os.Build.VERSION.SDK_INT,
+            "allFilesAccess" to com.example.myapplication.ui.settings.hasSharedStorageAccess(this))
+        Thread.getDefaultUncaughtExceptionHandler()?.let { previous ->
+            Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+                com.example.myapplication.diagnostics.RuntimeDiagnostics.event("uncaught_exception",
+                    "errorClass" to error.javaClass.name,
+                    "frames" to error.stackTrace.take(12).joinToString(" | "))
+                previous.uncaughtException(thread, error)
+            }
+        }
         store = FileStore(filesDir)
-        providerFactory = ProviderFactory()
+        store.recoverInterruptedSubagents()
+        attachmentStore = AttachmentStore(store)
+        providerFactory = ProviderFactory(client = ProviderFactory.defaultClient().newBuilder()
+            .addInterceptor(com.example.myapplication.diagnostics.DiagnosticHttpInterceptor()).build(),
+            attachmentStore = attachmentStore)
         modelFetcher = ModelFetcher(providerFactory.client)
         backupManager = BackupManager(this, store)
         configurationTransfer = ConfigurationTransfer(store)
@@ -47,7 +72,7 @@ class AgentApp : Application() {
 
     /** 每次调用构造一个新的引擎 */
     fun newAgentEngine(onSubagentStatus: (String) -> Unit = {}): AgentEngine {
-        val runner = SubagentRunner(store, providerFactory, onSubagentStatus)
+        val runner = SubagentRunner(store, providerFactory, onSubagentStatus, subagentRegistry)
         return AgentEngine(store, providerFactory, runner)
     }
 

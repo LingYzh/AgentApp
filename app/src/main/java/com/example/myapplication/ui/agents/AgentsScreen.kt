@@ -682,13 +682,18 @@ fun AgentEditContent(
                         }
                     }
                     Text(
-                        "大模型仅能感知并调用被授权的工具，未授权工具将在引擎层被阻断拦截。",
+                        "工具执行还受会话权限限制。主代理具备文件写入能力时，自动提供进入/提交计划工具；空工具列表沿用默认全集。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(4.dp))
                     val toolDescriptions = mapOf(
                         Tools.WRITE_FILE to ("写入文件" to "创建或覆盖工作区文本文件"),
+                        Tools.EDIT_FILE to ("编辑文件" to "精确替换文件中的指定文本"),
+                        Tools.DELETE_FILE to ("删除文件" to "仅删除单个文件；Accept Edit 每次确认，Plan/Readonly 禁止"),
+                        Tools.RUN_COMMAND to ("执行命令" to "在 App 权限范围内执行，按会话模式审批"),
+                        Tools.ENTER_PLAN_MODE to ("进入计划模式" to "主会话计划流程；具备文件写入能力时自动提供"),
+                        Tools.EXIT_PLAN_MODE to ("提交计划" to "向用户展示计划，接受后切换模式并执行"),
                         Tools.READ_FILE to ("读取文件" to "读取工作区文本文件内容"),
                         Tools.LIST_FILES to ("文件列表" to "浏览工作区中现有文件列表"),
                         Tools.SAVE_MEMORY to ("存储记忆" to "保存重要认知至长期记忆库"),

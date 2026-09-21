@@ -59,6 +59,10 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.coil.compose)
+    // Keep the existing CommonMark grammar, render native Compose blocks instead of TextViews.
+    implementation("com.atlassian.commonmark:commonmark:0.13.0")
+    implementation("com.atlassian.commonmark:commonmark-ext-gfm-tables:0.13.0")
+    implementation("com.atlassian.commonmark:commonmark-ext-gfm-strikethrough:0.13.0")
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 

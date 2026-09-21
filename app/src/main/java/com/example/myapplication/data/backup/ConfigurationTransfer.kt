@@ -9,6 +9,8 @@ import com.example.myapplication.data.store.FileStore
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
+import okio.ByteString.Companion.decodeBase64
+import okio.ByteString.Companion.toByteString
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
@@ -56,7 +58,9 @@ internal data class AgentArchive(
     val version: Int,
     val includesConversations: Boolean,
     val agents: List<AgentProfile>,
-    val conversations: List<Conversation>
+    val conversations: List<Conversation>,
+    /** workspace-relative attachment path -> base64 file contents */
+    val attachmentFiles: Map<String, String> = emptyMap()
 )
 
 @Serializable
@@ -67,7 +71,9 @@ internal data class RecordArchive(
     val format: String,
     val version: Int,
     val conversations: List<Conversation> = emptyList(),
-    val memories: List<MemoryRecord> = emptyList()
+    val memories: List<MemoryRecord> = emptyList(),
+    /** workspace-relative attachment path -> base64 file contents */
+    val attachmentFiles: Map<String, String> = emptyMap()
 )
 
 /** 独立配置迁移：先完整读取和校验，再由用户选择冲突处理方式后写入。 */
@@ -93,8 +99,10 @@ class ConfigurationTransfer(private val store: FileStore) {
         validateIds(selected.map { it.id })
         val selectedIds = selected.map { it.id }.toSet()
         val conversations = if (includeConversations) {
-            store.listConversations().filter { it.agentId in selectedIds }
+            val owned = store.listConversations().filter { it.agentId in selectedIds }
+            includeConversationDescendants(owned)
         } else emptyList()
+        val attachmentFiles = attachmentFilesFor(conversations)
         val avatarFiles = selected.mapNotNull { agent ->
             agent.avatarPath?.let { File(it) }?.takeIf { it.isFile }?.let { file ->
                 require(file.canonicalPath.startsWith(store.avatarsDir.canonicalPath + File.separator)) {
@@ -107,7 +115,8 @@ class ConfigurationTransfer(private val store: FileStore) {
         val archive = AgentArchive(
             AGENT_FORMAT, VERSION, includeConversations,
             selected.map { it.copy(avatarPath = if (it.id in avatarFiles) avatarEntry(it.id) else null) },
-            conversations
+            conversations,
+            attachmentFiles
         )
         val manifest = store.json.encodeToString(archive).toByteArray(Charsets.UTF_8)
         require(manifest.size.toLong() + avatarFiles.values.sumOf { it.length() } <= MAX_TOTAL_BYTES) {
@@ -144,8 +153,15 @@ class ConfigurationTransfer(private val store: FileStore) {
 
     fun exportRecords(output: OutputStream, kind: TransferKind, ids: Set<String>) {
         val archive = when (kind) {
-            TransferKind.CONVERSATIONS -> RecordArchive(CONVERSATION_FORMAT, VERSION,
-                conversations = select(store.listConversations(), ids) { it.id })
+            TransferKind.CONVERSATIONS -> {
+                val conversations = selectConversationTree(ids)
+                RecordArchive(
+                    CONVERSATION_FORMAT,
+                    VERSION,
+                    conversations = conversations,
+                    attachmentFiles = attachmentFilesFor(conversations)
+                )
+            }
             TransferKind.MEMORIES -> RecordArchive(MEMORY_FORMAT, VERSION,
                 memories = select(store.listMemories(), ids) { it.id }.map { entry ->
                     validateIds(listOf(entry.id))
@@ -168,6 +184,10 @@ class ConfigurationTransfer(private val store: FileStore) {
         val ids = if (isChat) archive.conversations.map { it.id } else archive.memories.map { it.entry.id }
         require(ids.isNotEmpty()) { "文件中没有可导入的记录" }
         validateIds(ids)
+        if (isChat) {
+            validateConversationParentGraph(archive.conversations)
+            validateAttachmentArchive(archive.conversations, archive.attachmentFiles)
+        }
         val local = if (isChat) store.listConversations().associate { it.id to it.title }
             else store.listMemories().associate { it.id to it.title }
         val incoming = if (isChat) archive.conversations.map { it.id to it.title }
@@ -189,10 +209,21 @@ class ConfigurationTransfer(private val store: FileStore) {
         val writes = linkedMapOf<File, ByteArray>()
         if (kind == TransferKind.CONVERSATIONS) {
             val existing = store.listConversations().map { it.id }.toSet()
+            val idMap = conversationIdMap(archive.conversations, existing, mode)
+            val availableParents = existing + idMap.values
+            val attachmentPathMap = attachmentPathMap(archive.attachmentFiles, mode)
             archive.conversations.forEach { chat ->
-                val id = if (mode == ImportMode.COPY && chat.id in existing) UUID.randomUUID().toString() else chat.id
-                writes[File(store.conversationsDir, "$id.json")] = store.json.encodeToString(chat.copy(id = id)).toByteArray(Charsets.UTF_8)
+                val id = idMap.getValue(chat.id)
+                val imported = normalizeImportedConversation(
+                    chat = chat,
+                    id = id,
+                    idMap = idMap,
+                    availableParents = availableParents,
+                    attachmentPathMap = attachmentPathMap
+                )
+                writes[File(store.conversationsDir, "$id.json")] = store.json.encodeToString(imported).toByteArray(Charsets.UTF_8)
             }
+            writeAttachmentFiles(archive.attachmentFiles, attachmentPathMap, writes)
         } else {
             val merged = store.listMemories().associateByTo(linkedMapOf()) { it.id }
             archive.memories.forEach { record ->
@@ -246,9 +277,13 @@ class ConfigurationTransfer(private val store: FileStore) {
         require(archive.agents.isNotEmpty()) { "文件中没有 Agent 配置" }
         validateIds(archive.agents.map { it.id })
         validateIds(archive.conversations.map { it.id })
+        validateConversationParentGraph(archive.conversations)
+        validateAttachmentArchive(archive.conversations, archive.attachmentFiles)
         val agentIds = archive.agents.map { it.id }.toSet()
         require(archive.includesConversations || archive.conversations.isEmpty()) { "会话选项与包内容不一致" }
-        require(archive.conversations.all { it.agentId in agentIds }) { "导入包包含不属于这些 Agent 的会话" }
+        require(archive.conversations.all { it.agentId == null || it.agentId in agentIds }) {
+            "导入包包含不属于这些 Agent 的会话"
+        }
         val avatarNames = archive.agents.mapNotNull { agent ->
             agent.avatarPath?.also { require(it == avatarEntry(agent.id)) { "Agent 头像路径无效" } }
         }.toSet()
@@ -309,13 +344,199 @@ class ConfigurationTransfer(private val store: FileStore) {
             merged[id] = agent.copy(id = id, avatarPath = avatar)
         }
         writes[agentsFile] = store.json.encodeToString(merged.values.toList()).toByteArray(Charsets.UTF_8)
+        val conversationIdMap = conversationIdMap(archive.conversations, localConversations, mode)
+        val availableParents = localConversations + conversationIdMap.values
+        val attachmentPathMap = attachmentPathMap(archive.attachmentFiles, mode)
         archive.conversations.forEach { conversation ->
-            val id = if (mode == ImportMode.COPY && conversation.id in localConversations) UUID.randomUUID().toString() else conversation.id
-            val imported = conversation.copy(id = id, agentId = idMap.getValue(checkNotNull(conversation.agentId)))
+            val id = conversationIdMap.getValue(conversation.id)
+            val imported = normalizeImportedConversation(
+                chat = conversation.copy(agentId = conversation.agentId?.let { idMap.getValue(it) }),
+                id = id,
+                idMap = conversationIdMap,
+                availableParents = availableParents,
+                attachmentPathMap = attachmentPathMap
+            )
             writes[File(store.conversationsDir, "$id.json")] = store.json.encodeToString(imported).toByteArray(Charsets.UTF_8)
         }
+        writeAttachmentFiles(archive.attachmentFiles, attachmentPathMap, writes)
         writeTransaction(writes)
         return TransferResult(agents = archive.agents.size, conversations = archive.conversations.size)
+    }
+
+    /** Include every descendant when a parent conversation is selected for export. */
+    private fun includeConversationDescendants(selected: List<Conversation>): List<Conversation> {
+        if (selected.isEmpty()) return emptyList()
+        val all = store.listConversations()
+        val childrenByParent = all.filter { it.parentConversationId != null }
+            .groupBy { it.parentConversationId!! }
+        val included = linkedSetOf<String>()
+        val queue = selected.map { it.id }.toMutableList()
+        var index = 0
+        while (index < queue.size) {
+            val id = queue[index++]
+            if (!included.add(id)) continue
+            childrenByParent[id].orEmpty().forEach { queue += it.id }
+        }
+        return all.filter { it.id in included }
+    }
+
+    private fun selectConversationTree(ids: Set<String>): List<Conversation> {
+        val selected = select(store.listConversations(), ids) { it.id }
+        return includeConversationDescendants(selected)
+    }
+
+    /** Export only attachment files referenced by the selected conversations. */
+    private fun attachmentFilesFor(conversations: List<Conversation>): Map<String, String> {
+        val paths = conversations.flatMap { conversation ->
+            conversation.messages.flatMap { message -> message.attachments.map { it.workspacePath } }
+        }.distinct()
+        val files = linkedMapOf<String, String>()
+        var encodedBytes = 0L
+        paths.forEach { path ->
+            if (!isAttachmentPath(path)) return@forEach
+            val file = runCatching { store.workspaceFile(path) }.getOrNull() ?: return@forEach
+            if (!file.isFile) return@forEach
+            val expectedEncodedSize = ((file.length() + 2L) / 3L) * 4L
+            require(encodedBytes + expectedEncodedSize <= MAX_TOTAL_BYTES) { "附件导出内容过大，请分批导出" }
+            val bytes = file.readBytes()
+            val encoded = bytes.toByteString().base64()
+            require(encodedBytes + encoded.length <= MAX_TOTAL_BYTES) { "附件导出内容过大，请分批导出" }
+            encodedBytes += encoded.length
+            files[path] = encoded
+        }
+        return files
+    }
+
+    private fun validateAttachmentArchive(
+        conversations: List<Conversation>,
+        files: Map<String, String>
+    ) {
+        val references = conversations.flatMap { conversation ->
+            conversation.messages.flatMap { message -> message.attachments }
+        }
+        val paths = references.map { it.workspacePath }.toSet()
+        paths.filter { it.startsWith("attachments/") }.forEach {
+            require(isAttachmentPath(it)) { "附件路径无效：$it" }
+        }
+        var decodedBytes = 0L
+        files.forEach { (path, encoded) ->
+            require(isAttachmentPath(path)) { "附件路径无效：$path" }
+            require(path in paths) { "导入包包含未引用的附件：$path" }
+            val decoded = decodeAttachment(encoded)
+            decodedBytes += decoded.size
+            require(decodedBytes <= MAX_TOTAL_BYTES) { "导入附件内容过大" }
+            references.filter { it.workspacePath == path }.forEach { attachment ->
+                require(attachment.sizeBytes == decoded.size.toLong()) {
+                    "附件大小与会话记录不一致：${attachment.name}"
+                }
+            }
+        }
+    }
+
+    private fun validateConversationParentGraph(conversations: List<Conversation>) {
+        val byId = conversations.associateBy { it.id }
+        conversations.forEach { conversation ->
+            val visited = mutableSetOf<String>()
+            var current: String? = conversation.id
+            while (current != null) {
+                if (!visited.add(current)) {
+                    throw IllegalArgumentException("会话父子关系包含循环引用")
+                }
+                current = byId[current]?.parentConversationId
+            }
+        }
+    }
+
+    private fun isAttachmentPath(path: String): Boolean {
+        if (!path.startsWith("attachments/")) return false
+        val parts = path.split('/')
+        if (parts.size < 3 || parts.any { it.isEmpty() || it == "." || it == ".." }) return false
+        val file = runCatching { store.workspaceFile(path).canonicalFile }.getOrNull() ?: return false
+        val attachmentsRoot = File(store.workspaceDir, "attachments").canonicalFile
+        return file.path.startsWith(attachmentsRoot.path + File.separator)
+    }
+
+    private fun decodeAttachment(encoded: String): ByteArray {
+        val bytes = encoded.decodeBase64()?.toByteArray()
+            ?: throw IllegalArgumentException("附件内容不是合法 Base64")
+        return bytes
+    }
+
+    private fun conversationIdMap(
+        conversations: List<Conversation>,
+        existing: Set<String>,
+        mode: ImportMode
+    ): Map<String, String> {
+        val used = existing.toMutableSet()
+        val result = linkedMapOf<String, String>()
+        conversations.forEach { conversation ->
+            var id = conversation.id
+            if (mode == ImportMode.COPY && id in used) {
+                do {
+                    id = UUID.randomUUID().toString()
+                } while (id in used)
+            }
+            result[conversation.id] = id
+            used += id
+        }
+        return result
+    }
+
+    private fun attachmentPathMap(files: Map<String, String>, mode: ImportMode): Map<String, String> {
+        if (mode != ImportMode.COPY) return files.keys.associateWith { it }
+        val result = linkedMapOf<String, String>()
+        files.keys.forEach { original ->
+            val name = FileStore.sanitizeFileName(original.substringAfterLast('/')).take(120).ifBlank { "attachment" }
+            var target: String
+            do {
+                target = "attachments/${UUID.randomUUID()}/$name"
+            } while (store.workspaceFile(target).exists())
+            result[original] = target
+        }
+        return result
+    }
+
+    private fun normalizeImportedConversation(
+        chat: Conversation,
+        id: String,
+        idMap: Map<String, String>,
+        availableParents: Set<String>,
+        attachmentPathMap: Map<String, String>
+    ): Conversation {
+        val parentId = chat.parentConversationId?.let { parent ->
+            idMap[parent] ?: parent.takeIf { it in availableParents }
+        }
+        val messages = chat.messages.map { message ->
+            message.copy(
+                fileChange = message.fileChange?.let { change ->
+                    change.copy(path = attachmentPathMap[change.path] ?: change.path)
+                },
+                attachments = message.attachments.map { attachment ->
+                    attachment.copy(workspacePath = attachmentPathMap[attachment.workspacePath] ?: attachment.workspacePath)
+                }
+            )
+        }.toMutableList()
+        val status = if (chat.parentConversationId != null && chat.executionStatus == "running") {
+            "cancelled"
+        } else chat.executionStatus
+        return chat.copy(
+            id = id,
+            parentConversationId = parentId,
+            executionStatus = status,
+            messages = messages
+        )
+    }
+
+    private fun writeAttachmentFiles(
+        sourceFiles: Map<String, String>,
+        pathMap: Map<String, String>,
+        writes: MutableMap<File, ByteArray>
+    ) {
+        sourceFiles.forEach { (sourcePath, encoded) ->
+            val targetPath = pathMap[sourcePath] ?: sourcePath
+            require(isAttachmentPath(targetPath)) { "附件路径无效：$targetPath" }
+            writes[store.workspaceFile(targetPath)] = decodeAttachment(encoded)
+        }
     }
 
     /** 确认前只读，避免 FileStore.loadAgents() 的首次预设写入副作用。 */

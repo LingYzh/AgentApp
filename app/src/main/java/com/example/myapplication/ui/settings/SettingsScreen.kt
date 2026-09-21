@@ -1,7 +1,10 @@
 package com.example.myapplication.ui.settings
 
+import android.Manifest
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,11 +16,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.AlertDialog
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -41,6 +44,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,8 +54,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.myapplication.data.model.ProviderConfig
 import com.example.myapplication.ui.theme.AgentTheme
 import com.example.myapplication.ui.theme.ExpressiveTokens
@@ -60,10 +67,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.myapplication.AgentApp
+import com.example.myapplication.agent.CommandPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class SettingsViewModel(val app: AgentApp) : ViewModel() {
     private val _maxLoops = MutableStateFlow(app.store.loadConfig().maxAgentLoops)
@@ -73,6 +83,13 @@ class SettingsViewModel(val app: AgentApp) : ViewModel() {
     val subagentProviderId = _subagentProviderId.asStateFlow()
     private val _subagentModel = MutableStateFlow(app.store.loadConfig().subagentModel)
     val subagentModel = _subagentModel.asStateFlow()
+
+    private val _autoApprovedCommands = MutableStateFlow(
+        app.store.loadConfig().autoApprovedCommands
+    )
+    val autoApprovedCommands = _autoApprovedCommands.asStateFlow()
+
+    private val autoApprovedCommandsWriteMutex = Mutex()
 
     val themeMode = app.themeMode
 
@@ -96,6 +113,43 @@ class SettingsViewModel(val app: AgentApp) : ViewModel() {
             app.store.saveConfig(
                 app.store.loadConfig().copy(subagentProviderId = providerId, subagentModel = model)
             )
+        }
+    }
+
+    /** Adds one complete command after the settings UI has handled any required confirmation. */
+    fun addAutoApprovedCommand(command: String): Boolean {
+        val normalized = command.trim()
+        if (normalized.isEmpty()) return false
+        if (normalized in _autoApprovedCommands.value) return false
+
+        _autoApprovedCommands.value = _autoApprovedCommands.value + normalized
+        persistAutoApprovedCommands { commands ->
+            if (normalized in commands) commands else commands + normalized
+        }
+        return true
+    }
+
+    fun removeAutoApprovedCommand(command: String) {
+        _autoApprovedCommands.value = _autoApprovedCommands.value.filterNot { it == command }
+        persistAutoApprovedCommands { commands -> commands.filterNot { it == command } }
+    }
+
+    fun refreshAutoApprovedCommands() {
+        viewModelScope.launch(Dispatchers.IO) {
+            autoApprovedCommandsWriteMutex.withLock {
+                _autoApprovedCommands.value = app.store.loadConfig().autoApprovedCommands.distinct()
+            }
+        }
+    }
+
+    private fun persistAutoApprovedCommands(update: (List<String>) -> List<String>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            autoApprovedCommandsWriteMutex.withLock {
+                val current = app.store.loadConfig()
+                val updated = update(current.autoApprovedCommands).distinct()
+                app.store.saveConfig(current.copy(autoApprovedCommands = updated))
+                _autoApprovedCommands.value = updated
+            }
         }
     }
 
@@ -130,6 +184,8 @@ class SettingsViewModel(val app: AgentApp) : ViewModel() {
 @Composable
 fun SettingsScreen(openDrawer: () -> Unit) {
     val app = LocalContext.current.applicationContext as AgentApp
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val vm: SettingsViewModel = viewModel(factory = viewModelFactory {
         initializer { SettingsViewModel(app) }
     })
@@ -139,6 +195,27 @@ fun SettingsScreen(openDrawer: () -> Unit) {
     val subagentModel by vm.subagentModel.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val status by vm.status.collectAsStateWithLifecycle()
+    val autoApprovedCommands by vm.autoApprovedCommands.collectAsStateWithLifecycle()
+
+    var storageAccessGranted by remember(context) {
+        mutableStateOf(hasSharedStorageAccess(context))
+    }
+    DisposableEffect(context, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                storageAccessGranted = hasSharedStorageAccess(context)
+                vm.refreshAutoApprovedCommands()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val legacyStoragePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        storageAccessGranted = hasSharedStorageAccess(context)
+    }
 
     var showImportConfirm by remember { mutableStateOf<android.net.Uri?>(null) }
 
@@ -162,6 +239,23 @@ fun SettingsScreen(openDrawer: () -> Unit) {
         onSubagentModelChange = { providerId, model -> vm.setSubagentModel(providerId, model) },
         busy = busy,
         status = status,
+        storageAccessGranted = storageAccessGranted,
+        onRequestStorageAccess = {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                openSharedStorageSettings(context)
+            } else {
+                legacyStoragePermissionLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.READ_EXTERNAL_STORAGE,
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    )
+                )
+            }
+        },
+        autoApprovedCommands = autoApprovedCommands,
+        onRemoveAutoApprovedCommand = vm::removeAutoApprovedCommand,
+        isLowRiskCommand = CommandPolicy::isLowRisk,
+        onAddAutoApprovedCommand = vm::addAutoApprovedCommand,
         onOpenDrawer = openDrawer,
         onExport = { exportLauncher.launch(app.backupManager.suggestedFileName()) },
         onImport = { importLauncher.launch(arrayOf("application/zip", "application/octet-stream")) }
@@ -203,7 +297,13 @@ fun SettingsContent(
     status: String?,
     onOpenDrawer: () -> Unit,
     onExport: () -> Unit,
-    onImport: () -> Unit
+    onImport: () -> Unit,
+    storageAccessGranted: Boolean = false,
+    onRequestStorageAccess: () -> Unit = {},
+    autoApprovedCommands: List<String> = emptyList(),
+    onRemoveAutoApprovedCommand: (String) -> Unit = {},
+    isLowRiskCommand: (String) -> Boolean = { false },
+    onAddAutoApprovedCommand: (String) -> Boolean = { false }
 ) {
     var loopsText by remember(maxLoops) { mutableStateOf(maxLoops.toString()) }
     var subProviderMenuExpanded by remember { mutableStateOf(false) }
@@ -283,6 +383,28 @@ fun SettingsContent(
                     )
                 }
             }
+
+            StorageAccessCard(
+                accessGranted = storageAccessGranted,
+                onRequestAccess = onRequestStorageAccess
+            )
+
+            Card(shape = ExpressiveTokens.CardShape, colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("诊断日志", style = MaterialTheme.typography.titleMedium)
+                    Text("已启用本地运行日志，最多保留 3 个约 1 MB 的文件。记录工具状态、权限、失败路径及网络状态，不记录消息正文、文件内容、命令内容或 API 密钥。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("调试版可通过 ADB run-as 导出 files/logs/。", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
+            AutoApprovedCommandsCard(
+                commands = autoApprovedCommands,
+                isLowRiskCommand = isLowRiskCommand,
+                onAddCommand = onAddAutoApprovedCommand,
+                onRemoveCommand = onRemoveAutoApprovedCommand
+            )
 
             // 子代理模型
             Card(
@@ -418,6 +540,136 @@ fun SettingsContent(
             }
             Spacer(modifier = Modifier.height(32.dp))
         }
+    }
+}
+
+@Composable
+private fun AutoApprovedCommandsCard(
+    commands: List<String>,
+    isLowRiskCommand: (String) -> Boolean,
+    onAddCommand: (String) -> Boolean,
+    onRemoveCommand: (String) -> Unit
+) {
+    var commandText by remember { mutableStateOf("") }
+    var commandError by remember { mutableStateOf<String?>(null) }
+    var pendingConfirmationCommand by remember { mutableStateOf<String?>(null) }
+
+    Card(
+        shape = ExpressiveTokens.CardShape,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("命令自动允许", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "记住你明确添加的完整命令。执行时按整条命令精确匹配，不会因为相同前缀而自动允许其他命令。未通过低风险检查的命令会先要求确认。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (commands.isEmpty()) {
+                Text(
+                    "尚未记住命令",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                commands.forEach { command ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = command,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        IconButton(onClick = { onRemoveCommand(command) }) {
+                            Icon(
+                                imageVector = Icons.Filled.Delete,
+                                contentDescription = "移除命令"
+                            )
+                        }
+                    }
+                }
+            }
+
+            OutlinedTextField(
+                value = commandText,
+                onValueChange = {
+                    commandText = it
+                    commandError = null
+                },
+                label = { Text("输入完整命令") },
+                singleLine = true,
+                isError = commandError != null,
+                supportingText = commandError?.let { message -> { Text(message) } },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(
+                onClick = {
+                    val command = commandText.trim()
+                    when {
+                        command.isEmpty() -> commandError = "请输入完整命令"
+                        command in commands -> commandError = "该命令已经在列表中"
+                        isLowRiskCommand(command) -> {
+                            if (onAddCommand(command)) {
+                                commandText = ""
+                                commandError = null
+                            } else {
+                                commandError = "该命令已经在列表中"
+                            }
+                        }
+                        else -> pendingConfirmationCommand = command
+                    }
+                },
+                enabled = commandText.isNotBlank()
+            ) {
+                Text("添加命令")
+            }
+        }
+    }
+
+    pendingConfirmationCommand?.let { command ->
+        AlertDialog(
+            onDismissRequest = { pendingConfirmationCommand = null },
+            title = { Text("确认自动允许命令？") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("这条命令未通过低风险检查。确认后只会自动允许下面这条完整命令：")
+                    Text(command, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "请确认你了解它的作用；相同前缀或其他命令不会因此获得自动允许。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (onAddCommand(command)) {
+                        commandText = ""
+                        commandError = null
+                    } else {
+                        commandError = "该命令已经在列表中"
+                    }
+                    pendingConfirmationCommand = null
+                }) {
+                    Text("确认添加")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingConfirmationCommand = null }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }
 

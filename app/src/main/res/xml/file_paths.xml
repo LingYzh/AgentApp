@@ -3,4 +3,5 @@
     <files-path name="workspace" path="workspace/" />
     <files-path name="backups" path="backups/" />
     <files-path name="root" path="." />
+    <external-path name="shared_storage" path="." />
 </paths>

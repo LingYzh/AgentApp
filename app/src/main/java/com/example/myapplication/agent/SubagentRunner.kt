@@ -6,6 +6,11 @@ import com.example.myapplication.data.model.ProviderConfig
 import com.example.myapplication.data.store.FileStore
 import com.example.myapplication.provider.ProviderFactory
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.supervisorScope
 
 /**
  * 子代理执行器（Claude Code Task 风格）：主代理通过 run_subagent 工具提供完整任务描述，
@@ -16,13 +21,17 @@ import kotlinx.coroutines.CancellationException
 class SubagentRunner(
     private val store: FileStore,
     private val providerFactory: ProviderFactory,
-    private val onStatus: (String) -> Unit = {}
+    private val onStatus: (String) -> Unit = {},
+    private val registry: SubagentRegistry = SubagentRegistry()
 ) {
     suspend fun run(
         task: String,
         providerName: String?,
         model: String?,
-        inherited: ProviderConfig
+        inherited: ProviderConfig,
+        parentConversationId: String? = null,
+        parentToolCallId: String? = null,
+        permissionSession: PermissionSession? = null
     ): String {
         val appConfig = store.loadConfig()
         val resolved: ProviderConfig = when {
@@ -46,35 +55,104 @@ class SubagentRunner(
         }
 
         onStatus("子代理运行中（${resolved.model}）…")
-        val conversation = Conversation(title = "子代理任务")
+        // Persist the running record before the first provider call. The root conversation
+        // list can therefore discover a child even while the parent tool is still waiting.
+        val conversation = Conversation(
+            title = task.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(32) ?: "子代理任务",
+            providerIdOverride = resolved.id,
+            modelOverride = resolved.model,
+            parentConversationId = parentConversationId,
+            parentToolCallId = parentToolCallId,
+            executionStatus = "running",
+            permissionMode = permissionSession?.conversation?.permissionMode ?: com.example.myapplication.data.model.PermissionMode.ACCEPT_EDIT,
+            allowedDirectories = permissionSession?.conversation?.allowedDirectories ?: emptyList()
+        )
         conversation.messages += ChatMessage(role = "user", content = task)
 
-        val engine = AgentEngine(store, providerFactory, subagentRunner = null)
-        return try {
-            engine.run(
-                conversation = conversation,
-                config = resolved,
-                maxLoops = appConfig.maxAgentLoops,
-                depth = 1,
-                systemOverride = "你是主 Agent 委派的子代理。独立完成交给你的任务，充分利用可用的本地工具，" +
-                    "最终回复要包含完整结论（主 Agent 只能看到你的最终回复）。",
-                allowedTools = Tools.SUBAGENT_DEFAULT.toSet()
-            )
-            val lastAssistant = conversation.messages.lastOrNull { it.role == "assistant" }
-            when {
-                lastAssistant == null -> "(子代理未产生回复)"
-                lastAssistant.isError -> {
-                    val detail = lastAssistant.content.ifBlank { "子代理未产生有效回复" }
-                    "错误: $detail"
-                }
-                lastAssistant.content.isBlank() -> "(子代理未产生回复)"
-                else -> lastAssistant.content
+        return supervisorScope {
+            val engine = AgentEngine(store, providerFactory, subagentRunner = null)
+            val child = async(start = CoroutineStart.LAZY) {
+                engine.run(
+                    conversation = conversation,
+                    config = resolved,
+                    maxLoops = appConfig.maxAgentLoops,
+                    depth = 1,
+                    systemOverride = "你是主 Agent 委派的子代理。独立完成交给你的任务，充分利用可用的本地工具，" +
+                        "最终回复要包含完整结论（主 Agent 只能看到你的最终回复）。",
+                    allowedTools = Tools.SUBAGENT_DEFAULT.toSet(),
+                    permissionSession = permissionSession?.childSession()
+                )
+                resultFrom(conversation)
             }
-        } catch (e: CancellationException) {
-            // 保留父协程的取消语义，不能把停止误报为普通子代理错误结果。
-            throw e
-        } catch (e: Exception) {
-            "错误: 子代理执行失败: ${e.message}"
+            // Register before persisting the visible conversation. A detail view can therefore
+            // always stop a saved running child, including one cancelled before it starts.
+            registry.register(conversation.id, child)
+            try {
+                store.saveConversation(conversation)
+                child.start()
+                val result = child.await()
+                val lastAssistant = conversation.messages.lastOrNull { it.role == "assistant" }
+                conversation.executionStatus = if (lastAssistant != null && !lastAssistant.isError && lastAssistant.content.isNotBlank()) {
+                    "completed"
+                } else {
+                    "failed"
+                }
+                store.saveConversation(conversation)
+                onStatus(if (conversation.executionStatus == "completed") "子代理已完成" else "子代理执行失败")
+                result
+            } catch (e: CancellationException) {
+                // A cancelled child is recoverable only when this parent coroutine is still
+                // active and the registry records a user stop. Parent cancellation must escape.
+                try {
+                    currentCoroutineContext().ensureActive()
+                } catch (parentCancellation: CancellationException) {
+                    conversation.executionStatus = "cancelled"
+                    store.saveConversation(conversation)
+                    onStatus("子代理已取消")
+                    throw parentCancellation
+                }
+                if (registry.wasStoppedByUser(conversation.id)) {
+                    val reason = registry.userStopReason(conversation.id).orEmpty()
+                    conversation.executionStatus = "cancelled"
+                    conversation.stopReason = reason
+                    store.saveConversation(conversation)
+                    onStatus("子代理已由用户中止")
+                    userStoppedResult(reason)
+                } else {
+                    conversation.executionStatus = "cancelled"
+                    store.saveConversation(conversation)
+                    onStatus("子代理已取消")
+                    throw e
+                }
+            } catch (e: Exception) {
+                conversation.executionStatus = "failed"
+                store.saveConversation(conversation)
+                onStatus("子代理执行失败")
+                "错误: 子代理执行失败: ${e.message}"
+            } finally {
+                registry.unregister(conversation.id, child)
+                // Covers an unexpected callback/provider failure after the normal status path;
+                // the latest streamed messages and lifecycle state remain available on disk.
+                store.saveConversation(conversation)
+            }
         }
+    }
+
+    private fun resultFrom(conversation: Conversation): String {
+        val lastAssistant = conversation.messages.lastOrNull { it.role == "assistant" }
+        return when {
+            lastAssistant == null -> "(子代理未产生回复)"
+            lastAssistant.isError -> {
+                val detail = lastAssistant.content.ifBlank { "子代理未产生有效回复" }
+                "错误: $detail"
+            }
+            lastAssistant.content.isBlank() -> "(子代理未产生回复)"
+            else -> lastAssistant.content
+        }
+    }
+
+    private fun userStoppedResult(reason: String): String {
+        val visibleReason = reason.ifBlank { "（未提供）" }
+        return "用户已中止子代理。理由：$visibleReason。请根据理由调整后续策略。"
     }
 }

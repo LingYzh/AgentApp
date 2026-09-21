@@ -2,6 +2,7 @@ package com.example.myapplication.provider
 
 import com.example.myapplication.data.model.ChatMessage
 import com.example.myapplication.data.model.ProviderConfig
+import com.example.myapplication.data.store.AttachmentStore
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -19,7 +20,10 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * 响应提取：customStreamPath（SSE 每行 JSON 的增量路径）/ customResponsePath（整包 JSON 路径）
  * 注意：自定义模式不支持工具调用解析（无统一格式），Agent 自动降级为纯对话。
  */
-class CustomProvider(private val client: OkHttpClient) : ApiProvider {
+class CustomProvider(
+    private val client: OkHttpClient,
+    private val attachmentStore: AttachmentStore? = null
+) : ApiProvider {
 
     override suspend fun streamChat(
         config: ProviderConfig,
@@ -28,6 +32,10 @@ class CustomProvider(private val client: OkHttpClient) : ApiProvider {
         tools: List<ToolSpec>,
         onEvent: suspend (StreamEvent) -> Unit
     ) {
+        require(messages.none { it.attachments.isNotEmpty() }) {
+            "自定义模板不支持附件读取，请改用 OpenAI 兼容、Anthropic 或 Gemini"
+        }
+        val store = attachmentStoreFor(attachmentStore, config, messages)
         val messagesJson = buildJsonArray {
             if (system.isNotBlank()) {
                 addJsonObject {
@@ -38,7 +46,7 @@ class CustomProvider(private val client: OkHttpClient) : ApiProvider {
             messages.forEach { m ->
                 addJsonObject {
                     put("role", if (m.role == "tool") "user" else m.role)
-                    put("content", m.content)
+                    put("content", wireMessageText(store, m))
                 }
             }
         }

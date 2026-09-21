@@ -6,6 +6,7 @@ import com.example.myapplication.provider.JsonPath
 import com.example.myapplication.provider.OpenAiStreamParser
 import com.example.myapplication.provider.ProviderJson
 import com.example.myapplication.provider.StreamEvent
+import com.example.myapplication.data.model.TokenUsage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -33,6 +34,13 @@ class ProviderParsingTest {
     }
 
     @Test
+    fun `openai length finish reason remains distinguishable from success`() {
+        val p = OpenAiStreamParser()
+        p.parse("""{"choices":[{"delta":{},"finish_reason":"length"}]}""")
+        assertEquals(StreamEvent.Done("length"), p.finish().single())
+    }
+
+    @Test
     fun `openai tool call fragments accumulate`() {
         val p = OpenAiStreamParser()
         p.parse("""{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"write_file","arguments":"{\"path\":"}}]}}]}""")
@@ -50,6 +58,17 @@ class ProviderParsingTest {
     fun `openai garbage line yields no events`() {
         val p = OpenAiStreamParser()
         assertTrue(p.parse("not json at all").isEmpty())
+    }
+
+    @Test
+    fun `openai usage chunk preserves reported zeros and optional breakdown`() {
+        val events = OpenAiStreamParser().parse(
+            """{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":12,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":7}}}"""
+        )
+        assertEquals(
+            listOf(StreamEvent.Usage(TokenUsage(0, 12, cacheReadTokens = 0, reasoningTokens = 7))),
+            events
+        )
     }
 
     // ---------- Anthropic ----------
@@ -86,6 +105,25 @@ class ProviderParsingTest {
         assertEquals(listOf(StreamEvent.Error("Overloaded")), events)
     }
 
+    @Test
+    fun `anthropic usage merges start input cache and final output`() {
+        val p = AnthropicStreamParser()
+        val start = p.parse(
+            """{"type":"message_start","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":20,"cache_creation_input_tokens":10,"output_tokens":0}}}"""
+        )
+        val end = p.parse(
+            """{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"cache_read_input_tokens":25,"output_tokens":45,"output_tokens_details":{"thinking_tokens":11}}}"""
+        )
+        assertEquals(
+            StreamEvent.Usage(TokenUsage(130, 0, cacheReadTokens = 20, cacheWriteTokens = 10)),
+            start.single()
+        )
+        assertEquals(
+            StreamEvent.Usage(TokenUsage(135, 45, cacheReadTokens = 25, cacheWriteTokens = 10, reasoningTokens = 11)),
+            end.single()
+        )
+    }
+
     // ---------- Gemini ----------
 
     @Test
@@ -96,7 +134,7 @@ class ProviderParsingTest {
         )
         assertEquals(
             listOf(StreamEvent.Text("可见文本"), StreamEvent.Thinking("内心活动")),
-            events
+            events.filterNot { it is StreamEvent.ProviderBlocks }
         )
     }
 
@@ -109,7 +147,18 @@ class ProviderParsingTest {
         val call = events.filterIsInstance<StreamEvent.ToolCall>().single()
         assertEquals("list_files", call.name)
         assertEquals("{\"path\":\"\"}", call.argumentsJson)
-        assertEquals(StreamEvent.Done("STOP"), p.finish().single())
+        assertEquals(StreamEvent.Done("STOP"), p.finish().filterIsInstance<StreamEvent.Done>().single())
+    }
+
+    @Test
+    fun `gemini usage metadata maps cache and thought tokens`() {
+        val events = GeminiStreamParser().parse(
+            """{"usageMetadata":{"promptTokenCount":30,"candidatesTokenCount":0,"cachedContentTokenCount":8,"thoughtsTokenCount":5}}"""
+        )
+        assertEquals(
+            listOf(StreamEvent.Usage(TokenUsage(30, 5, cacheReadTokens = 8, reasoningTokens = 5))),
+            events
+        )
     }
 
     // ---------- JsonPath ----------

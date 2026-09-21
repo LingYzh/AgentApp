@@ -1,5 +1,7 @@
 package com.example.myapplication.ui.components
 
+import androidx.compose.material3.MaterialTheme
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -67,7 +69,8 @@ fun ListSelectionBar(
     busy: Boolean = false,
     onDelete: (Set<String>) -> Unit,
     onImport: (() -> Unit)? = null,
-    onExport: ((Set<String>) -> Unit)? = null
+    onExport: ((Set<String>) -> Unit)? = null,
+    deleteNotice: String? = null
 ) {
     var deleteIds by rememberSaveable { mutableStateOf<List<String>>(arrayListOf()) }
     var deleteNames by rememberSaveable { mutableStateOf<List<String>>(arrayListOf()) }
@@ -101,6 +104,7 @@ fun ListSelectionBar(
             text = {
                 Column {
                     Text("将删除所选的 ${deleteIds.size} 项，此操作无法撤销。")
+                    deleteNotice?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     Text(deleteNames.joinToString("\n"),
                         modifier = Modifier.padding(top = 12.dp).heightIn(max = 240.dp)
                             .verticalScroll(rememberScrollState()))

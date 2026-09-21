@@ -2,6 +2,9 @@ package com.example.myapplication.provider
 
 import com.example.myapplication.data.model.ChatMessage
 import com.example.myapplication.data.model.ProviderConfig
+import com.example.myapplication.data.model.MessageAttachment
+import com.example.myapplication.data.model.TokenUsage
+import com.example.myapplication.data.store.AttachmentStore
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -24,6 +27,10 @@ sealed interface StreamEvent {
     data class Text(val delta: String) : StreamEvent
     data class Thinking(val delta: String) : StreamEvent
     data class ToolCall(val id: String, val name: String, val argumentsJson: String) : StreamEvent
+    /** Provider-reported token accounting. A null field is unknown; zero is retained as real usage. */
+    data class Usage(val usage: TokenUsage) : StreamEvent
+    /** Opaque assistant blocks for one protocol. Consumers replace the prior snapshot. */
+    data class ProviderBlocks(val protocol: String, val blocks: List<JsonObject>) : StreamEvent
     data class Done(val stopReason: String?) : StreamEvent
     data class Error(val message: String) : StreamEvent
 }
@@ -55,6 +62,33 @@ val ProviderJson = Json {
     ignoreUnknownKeys = true
     encodeDefaults = false
 }
+
+/**
+ * Keeps workspace attachments visible to every protocol and fails early when
+ * native content cannot be read.  Provider-specific builders only encode the
+ * native subset; the text describes both native and workspace attachments.
+ */
+internal fun attachmentStoreFor(
+    attachmentStore: AttachmentStore?,
+    config: ProviderConfig,
+    messages: List<ChatMessage>
+): AttachmentStore? {
+    val attachments = messages.flatMap { it.attachments }
+    if (attachments.isEmpty()) return attachmentStore
+    val store = requireNotNull(attachmentStore) { "附件存储尚未初始化，无法发送附件" }
+    require(messages.none { it.role != "user" && nativeAttachments(it).isNotEmpty() }) {
+        "原生附件只能附在用户消息上，无法安全重放该历史消息"
+    }
+    store.validateNative(config, attachments)
+    return store
+}
+
+internal fun wireMessageText(attachmentStore: AttachmentStore?, message: ChatMessage): String =
+    if (message.attachments.isEmpty()) message.content
+    else requireNotNull(attachmentStore) { "附件存储尚未初始化，无法发送附件" }.messageText(message)
+
+internal fun nativeAttachments(message: ChatMessage): List<MessageAttachment> =
+    message.attachments.filter { it.delivery == "native" }
 
 /** 取消监听持续到响应体关闭，覆盖等待响应头及阻塞的 SSE 读取。 */
 internal suspend fun <T> withCancellableResponse(

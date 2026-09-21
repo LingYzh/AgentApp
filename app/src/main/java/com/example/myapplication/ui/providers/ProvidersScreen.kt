@@ -76,9 +76,18 @@ import com.example.myapplication.safePopBackStack
 import com.example.myapplication.ui.theme.ExpressiveTokens
 import com.example.myapplication.ui.transfer.ConfigurationTransferHost
 import com.example.myapplication.data.model.AppConfig
+import com.example.myapplication.data.model.AnthropicThinkingMode
 import com.example.myapplication.data.model.ChatMessage
 import com.example.myapplication.data.model.ProviderConfig
 import com.example.myapplication.data.model.ProviderType
+import com.example.myapplication.data.model.ModelCapabilities
+import com.example.myapplication.data.model.ReasoningEffort
+import com.example.myapplication.data.model.ReasoningProtocol
+import com.example.myapplication.data.model.anthropicThinkingProtocol
+import com.example.myapplication.data.model.reasoningSupportFor
+import com.example.myapplication.data.model.temperatureConflictFor
+import com.example.myapplication.provider.anthropicBudgetFor
+import com.example.myapplication.provider.geminiBudgetFor
 import com.example.myapplication.ui.theme.AgentTheme
 import com.example.myapplication.provider.StreamEvent
 import kotlinx.coroutines.Dispatchers
@@ -197,6 +206,10 @@ class ProvidersViewModel(val app: AgentApp) : ViewModel() {
     val fetchingModels = _fetchingModels.asStateFlow()
     private val _fetchedModels = MutableStateFlow<List<String>?>(null)
     val fetchedModels = _fetchedModels.asStateFlow()
+    private val _fetchedCapabilities = MutableStateFlow<Map<String, ModelCapabilities>?>(null)
+    val fetchedCapabilities = _fetchedCapabilities.asStateFlow()
+    private val _fetchedScope = MutableStateFlow<String?>(null)
+    val fetchedScope = _fetchedScope.asStateFlow()
     private val _fetchError = MutableStateFlow<String?>(null)
     val fetchError = _fetchError.asStateFlow()
 
@@ -207,9 +220,12 @@ class ProvidersViewModel(val app: AgentApp) : ViewModel() {
         _fetchError.value = null
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val models = app.modelFetcher.fetchModels(provider)
-                _fetchedModels.value = models
-                if (models.isEmpty()) _fetchError.value = "接口返回为空"
+                val scope = capabilityScope(provider.type, provider.baseUrl, provider.modelsUrl)
+                val catalog = app.modelFetcher.fetchModelCatalog(provider)
+                _fetchedModels.value = catalog.models
+                _fetchedCapabilities.value = catalog.discoveredCapabilities
+                _fetchedScope.value = scope
+                if (catalog.models.isEmpty()) _fetchError.value = "接口返回为空"
             } catch (error: CancellationException) {
                 throw error
             } catch (e: Exception) {
@@ -396,6 +412,8 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
     val testResult by vm.testResult.collectAsStateWithLifecycle()
     val fetchingModels by vm.fetchingModels.collectAsStateWithLifecycle()
     val fetchedModels by vm.fetchedModels.collectAsStateWithLifecycle()
+    val fetchedCapabilities by vm.fetchedCapabilities.collectAsStateWithLifecycle()
+    val fetchedScope by vm.fetchedScope.collectAsStateWithLifecycle()
     val fetchError by vm.fetchError.collectAsStateWithLifecycle()
 
     val existing = remember(providerId) {
@@ -410,6 +428,8 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
         testResult = testResult,
         fetchingModels = fetchingModels,
         fetchedModels = fetchedModels,
+        fetchedCapabilities = fetchedCapabilities,
+        fetchedScope = fetchedScope,
         fetchError = fetchError,
         onBack = { navController.safePopBackStack() },
         onSave = { config ->
@@ -433,6 +453,8 @@ fun ProviderEditContent(
     testResult: String?,
     fetchingModels: Boolean,
     fetchedModels: List<String>?,
+    fetchedCapabilities: Map<String, ModelCapabilities>?,
+    fetchedScope: String?,
     fetchError: String?,
     onBack: () -> Unit,
     onSave: (ProviderConfig) -> Unit,
@@ -446,16 +468,71 @@ fun ProviderEditContent(
     var apiKey by remember { mutableStateOf(initialConfig?.apiKey ?: "") }
     var model by remember { mutableStateOf(initialConfig?.model ?: "") }
     var temperature by remember { mutableStateOf(initialConfig?.temperature?.toString() ?: "") }
+    var maxOutputTokens by remember { mutableStateOf(initialConfig?.maxOutputTokens?.toString() ?: "") }
+    var reasoningEffort by remember { mutableStateOf(initialConfig?.reasoningEffort) }
+    var anthropicThinkingMode by remember {
+        mutableStateOf(initialConfig?.anthropicThinkingMode ?: AnthropicThinkingMode.AUTO)
+    }
     var headers by remember {
         mutableStateOf(initialConfig?.extraHeaders?.entries?.joinToString("\n") { "${it.key}: ${it.value}" } ?: "")
     }
     var template by remember { mutableStateOf(initialConfig?.customRequestTemplate ?: "") }
     var responsePath by remember { mutableStateOf(initialConfig?.customResponsePath ?: "") }
     var streamPath by remember { mutableStateOf(initialConfig?.customStreamPath ?: "") }
+    var capabilityOverrides by remember {
+        mutableStateOf(initialConfig?.capabilityOverrides ?: emptyMap())
+    }
+    var contextWindowOverrides by remember {
+        mutableStateOf(initialConfig?.contextWindowOverrides ?: emptyMap())
+    }
     var typeMenuExpanded by remember { mutableStateOf(false) }
     var modelMenuExpanded by remember { mutableStateOf(false) }
+    var reasoningMenuExpanded by remember { mutableStateOf(false) }
+    var anthropicThinkingModeMenuExpanded by remember { mutableStateOf(false) }
 
-    val modelCandidates = fetchedModels ?: initialConfig?.models ?: emptyList()
+    val currentScope = capabilityScope(type, baseUrl, modelsUrl)
+    val initialScope = initialConfig?.let { capabilityScope(it.type, it.baseUrl, it.modelsUrl) }
+    val fetchedMatchesScope = fetchedScope == currentScope
+    val modelCandidates = if (fetchedModels != null && fetchedMatchesScope) {
+        fetchedModels
+    } else {
+        initialConfig?.models ?: emptyList()
+    }
+    // Discovery data belongs to one catalogue endpoint; never carry it to a changed endpoint.
+    val discoveredCapabilities = when {
+        fetchedModels != null && fetchedMatchesScope -> fetchedCapabilities.orEmpty()
+        currentScope == initialScope -> initialConfig?.discoveredCapabilities.orEmpty()
+        else -> emptyMap()
+    }
+    val currentModelId = model.trim()
+    val reasoningSupport = reasoningSupportFor(type, currentModelId)
+    val selectedReasoning = when (type) {
+        ProviderType.OPENAI, ProviderType.ANTHROPIC -> reasoningEffort
+        else -> reasoningEffort?.takeIf { it in reasoningSupport.efforts }
+    }
+    val anthropicProtocol = selectedReasoning
+        ?.takeIf { type == ProviderType.ANTHROPIC && it != ReasoningEffort.NONE }
+        ?.let { anthropicThinkingProtocol(currentModelId, anthropicThinkingMode) }
+    val temperatureConflict = temperatureConflictFor(type, currentModelId, selectedReasoning)
+    val parsedMaxOutputTokens = maxOutputTokens.trim().toIntOrNull()
+    val manualThinkingBudget = selectedReasoning
+        ?.takeIf { anthropicProtocol == ReasoningProtocol.ANTHROPIC_MANUAL }
+        ?.let(::anthropicBudgetFor)
+    val maxOutputTokensError = when {
+        maxOutputTokens.isBlank() -> null
+        parsedMaxOutputTokens == null || parsedMaxOutputTokens <= 0 -> "请输入大于 0 的整数。"
+        manualThinkingBudget != null && parsedMaxOutputTokens <= manualThinkingBudget ->
+            "手动 thinking 预算为 $manualThinkingBudget，最大输出必须更大。"
+        else -> null
+    }
+    val currentOverride = capabilityOverrides[currentModelId]
+    val currentAutoCapabilities = discoveredCapabilities[currentModelId] ?: ModelCapabilities()
+    val currentCapabilities = currentOverride ?: currentAutoCapabilities
+
+    fun updateCurrentCapabilities(transform: (ModelCapabilities) -> ModelCapabilities) {
+        if (currentModelId.isBlank()) return
+        capabilityOverrides = capabilityOverrides + (currentModelId to transform(currentCapabilities))
+    }
 
     fun buildConfig() = ProviderConfig(
         id = initialConfig?.id ?: java.util.UUID.randomUUID().toString(),
@@ -465,7 +542,10 @@ fun ProviderEditContent(
         modelsUrl = modelsUrl.trim(),
         apiKey = apiKey.trim(),
         model = model.trim(),
-        temperature = temperature.toFloatOrNull(),
+        temperature = temperature.toFloatOrNull().takeUnless { temperatureConflict != null },
+        maxOutputTokens = parsedMaxOutputTokens?.takeIf { it > 0 },
+        reasoningEffort = selectedReasoning,
+        anthropicThinkingMode = anthropicThinkingMode,
         customRequestTemplate = template,
         customResponsePath = responsePath.trim(),
         customStreamPath = streamPath.trim(),
@@ -475,7 +555,10 @@ fun ProviderEditContent(
                 if (idx > 0) line.substring(0, idx).trim() to line.substring(idx + 1).trim() else null
             }
             .toMap(),
-        models = modelCandidates
+        models = modelCandidates,
+        discoveredCapabilities = discoveredCapabilities,
+        capabilityOverrides = capabilityOverrides,
+        contextWindowOverrides = contextWindowOverrides
     )
 
     Scaffold(
@@ -488,9 +571,12 @@ fun ProviderEditContent(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
+                    IconButton(
+                        onClick = {
                         onSave(buildConfig())
-                    }) { Icon(Icons.Filled.Check, "保存") }
+                        },
+                        enabled = maxOutputTokensError == null
+                    ) { Icon(Icons.Filled.Check, "保存") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
@@ -588,6 +674,24 @@ fun ProviderEditContent(
                     }
                 }
             }
+            if (currentModelId.isNotBlank()) {
+                OutlinedTextField(
+                    value = contextWindowOverrides[currentModelId]?.toString().orEmpty(),
+                    onValueChange = { value ->
+                        val trimmed = value.trim()
+                        val parsed = trimmed.toIntOrNull()
+                        contextWindowOverrides = when {
+                            trimmed.isBlank() -> contextWindowOverrides - currentModelId
+                            parsed != null && parsed > 0 -> contextWindowOverrides + (currentModelId to parsed)
+                            else -> contextWindowOverrides
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("最大上下文 tokens（可选）") },
+                    supportingText = { Text("只保存到当前模型；留空表示未知，不估算上下文窗口。") },
+                    singleLine = true
+                )
+            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -615,10 +719,187 @@ fun ProviderEditContent(
                 )
             }
 
+            if (currentModelId.isNotBlank() && type != ProviderType.CUSTOM) {
+                Text("当前模型能力", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    when {
+                        currentOverride != null -> "来源：手动覆盖（仅 $currentModelId）"
+                        discoveredCapabilities.containsKey(currentModelId) -> "来源：接口自动发现"
+                        else -> "接口未提供能力信息，请手动设置"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                CapabilityToggleRow("图片", currentCapabilities.image) {
+                    updateCurrentCapabilities { it.copy(image = !it.image) }
+                }
+                CapabilityToggleRow("PDF", currentCapabilities.pdf) {
+                    updateCurrentCapabilities { it.copy(pdf = !it.pdf) }
+                }
+                CapabilityToggleRow(
+                    "音频（仅 Gemini 原生请求）", currentCapabilities.audio,
+                    enabled = type == ProviderType.GEMINI
+                ) {
+                    updateCurrentCapabilities { it.copy(audio = !it.audio) }
+                }
+                CapabilityToggleRow(
+                    "视频（仅 Gemini 原生请求）", currentCapabilities.video,
+                    enabled = type == ProviderType.GEMINI
+                ) {
+                    updateCurrentCapabilities { it.copy(video = !it.video) }
+                }
+                if (currentOverride != null) {
+                    TextButton(onClick = { capabilityOverrides = capabilityOverrides - currentModelId }) {
+                        Text("恢复接口自动能力")
+                    }
+                }
+            } else if (currentModelId.isNotBlank()) {
+                Text(
+                    "自定义模板不支持附件读取，请改用 OpenAI 兼容、Anthropic 或 Gemini。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
             OutlinedTextField(
                 temperature, { temperature = it }, Modifier.fillMaxWidth(),
-                label = { Text("温度（可留空）") }, singleLine = true
+                label = { Text(temperatureConflict?.let { "温度（当前组合不可用）" } ?: "温度（可留空）") },
+                singleLine = true,
+                enabled = temperatureConflict == null
             )
+            if (type != ProviderType.CUSTOM) {
+                OutlinedTextField(
+                    maxOutputTokens,
+                    { maxOutputTokens = it },
+                    Modifier.fillMaxWidth(),
+                    label = { Text("最大输出 tokens（可选）") },
+                    supportingText = {
+                        Text(
+                            when (type) {
+                                ProviderType.OPENAI -> "留空不发送 max_tokens，由上游决定。"
+                                ProviderType.ANTHROPIC -> "留空发送 65536；该协议的 max_tokens 包含 thinking 和正文。"
+                                ProviderType.GEMINI -> "留空不发送 maxOutputTokens，由上游决定。"
+                                ProviderType.CUSTOM -> ""
+                            }
+                        )
+                    },
+                    isError = maxOutputTokensError != null,
+                    singleLine = true
+                )
+                maxOutputTokensError?.let { error ->
+                    Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+            if (type != ProviderType.CUSTOM) {
+                Text("思考强度", style = MaterialTheme.typography.titleSmall)
+                ExposedDropdownMenuBox(
+                    expanded = reasoningMenuExpanded,
+                    onExpandedChange = {
+                        if (reasoningSupport.efforts.isNotEmpty()) reasoningMenuExpanded = it
+                    }
+                ) {
+                    OutlinedTextField(
+                        value = selectedReasoning?.let { "${it.wireValue}（${it.label}）" } ?: "默认（不发送参数）",
+                        onValueChange = {},
+                        readOnly = true,
+                        enabled = reasoningSupport.efforts.isNotEmpty(),
+                        label = { Text("思考强度（可选）") },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(reasoningMenuExpanded)
+                        },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = reasoningMenuExpanded,
+                        onDismissRequest = { reasoningMenuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("默认（不发送参数）") },
+                            onClick = { reasoningEffort = null; reasoningMenuExpanded = false }
+                        )
+                        reasoningSupport.efforts.forEach { effort ->
+                            DropdownMenuItem(
+                                text = { Text("${effort.wireValue}（${effort.label}）") },
+                                onClick = { reasoningEffort = effort; reasoningMenuExpanded = false }
+                            )
+                        }
+                    }
+                }
+                Text(
+                    reasoningSupport.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (type == ProviderType.ANTHROPIC) {
+                    ExposedDropdownMenuBox(
+                        expanded = anthropicThinkingModeMenuExpanded,
+                        onExpandedChange = { anthropicThinkingModeMenuExpanded = it }
+                    ) {
+                        OutlinedTextField(
+                            value = anthropicThinkingMode.label,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Claude thinking 模式") },
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(anthropicThinkingModeMenuExpanded)
+                            },
+                            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = anthropicThinkingModeMenuExpanded,
+                            onDismissRequest = { anthropicThinkingModeMenuExpanded = false }
+                        ) {
+                            AnthropicThinkingMode.entries.forEach { mode ->
+                                DropdownMenuItem(
+                                    text = { Text(mode.label) },
+                                    onClick = {
+                                        anthropicThinkingMode = mode
+                                        anthropicThinkingModeMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        when {
+                            selectedReasoning == null -> "默认不发送 thinking 参数。"
+                            selectedReasoning == ReasoningEffort.NONE -> "关闭时发送 thinking.disabled，不发送 effort。"
+                            anthropicProtocol == ReasoningProtocol.ANTHROPIC_MANUAL -> "此模型将使用固定 thinking token 预算。"
+                            else -> "此模型将发送 adaptive thinking 与 output_config.effort。"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (reasoningEffort != null && selectedReasoning == null) {
+                    Text(
+                        "已保存的思考强度不适用于当前模型；保存时会移除，且本次不会发送。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                if (selectedReasoning != null && anthropicProtocol == ReasoningProtocol.ANTHROPIC_MANUAL) {
+                    Text(
+                        "此档位会请求 ${anthropicBudgetFor(selectedReasoning)} 个 thinking tokens；max_tokens 必须比该预算大。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (selectedReasoning != null && reasoningSupport.protocol == ReasoningProtocol.GEMINI_THINKING_BUDGET) {
+                    Text(
+                        "此档位会发送 thinkingBudget=${geminiBudgetFor(currentModelId, selectedReasoning)}。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                temperatureConflict?.let { conflict ->
+                    Text(
+                        "$conflict 保存时将不发送温度。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             OutlinedTextField(
                 headers, { headers = it }, Modifier.fillMaxWidth(),
                 label = { Text("附加请求头（每行一个 Key: Value，可留空）") }, minLines = 1, maxLines = 4
@@ -648,7 +929,7 @@ fun ProviderEditContent(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Button(
                     onClick = { onTest(buildConfig()) },
-                    enabled = !testing && baseUrl.isNotBlank() && model.isNotBlank()
+                    enabled = !testing && maxOutputTokensError == null && baseUrl.isNotBlank() && model.isNotBlank()
                 ) {
                     if (testing) CircularProgressIndicator(
                         modifier = Modifier.size(18.dp),
@@ -674,12 +955,28 @@ fun ProviderEditContent(
     }
 }
 
+@Composable
+private fun CapabilityToggleRow(
+    label: String,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = checked, onCheckedChange = { onClick() }, enabled = enabled)
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
 private fun defaultBaseUrl(type: ProviderType): String = when (type) {
     ProviderType.OPENAI -> "https://api.openai.com/v1"
     ProviderType.ANTHROPIC -> "https://api.anthropic.com"
     ProviderType.GEMINI -> "https://generativelanguage.googleapis.com"
     ProviderType.CUSTOM -> ""
 }
+
+private fun capabilityScope(type: ProviderType, baseUrl: String, modelsUrl: String): String =
+    "${type.name}|${baseUrl.trim().trimEnd('/')}|${modelsUrl.trim()}"
 
 private fun baseUrlHint(type: ProviderType): String = when (type) {
     ProviderType.OPENAI -> "填到 /v1 即可，自动追加 /chat/completions；兼容 DeepSeek、通义、Ollama 等"
@@ -783,6 +1080,8 @@ private fun ProviderEditPreviewLight() {
             testResult = "✅ 连接成功，模型响应正常",
             fetchingModels = false,
             fetchedModels = listOf("claude-3-7-sonnet", "claude-3-5-haiku"),
+            fetchedCapabilities = emptyMap(),
+            fetchedScope = capabilityScope(ProviderType.ANTHROPIC, "https://api.anthropic.com", ""),
             fetchError = null,
             onBack = {},
             onSave = {},
@@ -803,6 +1102,8 @@ private fun ProviderEditPreviewDark() {
             testResult = null,
             fetchingModels = false,
             fetchedModels = null,
+            fetchedCapabilities = null,
+            fetchedScope = null,
             fetchError = null,
             onBack = {},
             onSave = {},

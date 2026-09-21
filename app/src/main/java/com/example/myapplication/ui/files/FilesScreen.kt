@@ -43,6 +43,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -73,6 +75,7 @@ import com.example.myapplication.Routes
 import com.example.myapplication.safeNavigateDirect
 import com.example.myapplication.safePopBackStack
 import com.example.myapplication.data.backup.SelectedFilesExport
+import com.example.myapplication.data.model.FileChange
 import com.example.myapplication.ui.components.ListSelectionBar
 import com.example.myapplication.ui.components.rememberListSelection
 import com.example.myapplication.ui.theme.AgentTheme
@@ -428,8 +431,12 @@ fun FilesContent(
 fun FileViewScreen(navController: NavHostController, path: String) {
     val app = LocalContext.current.applicationContext as AgentApp
     val context = LocalContext.current
+    val targetFile = remember(path) {
+        if (java.io.File(path).isAbsolute) java.io.File(path).canonicalFile else app.store.workspaceFile(path)
+    }
     var content by remember { mutableStateOf<String?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
+    var recentChange by remember { mutableStateOf<FileChange?>(null) }
 
     val isImage = remember(path) {
         path.substringAfterLast('.', "").lowercase() in
@@ -437,17 +444,36 @@ fun FileViewScreen(navController: NavHostController, path: String) {
     }
 
     LaunchedEffect(path) {
-        if (isImage) return@LaunchedEffect
+        content = null
+        loadError = null
+        recentChange = null
         withContext(Dispatchers.IO) {
             try {
-                content = app.store.readWorkspace(path, maxBytes = 512 * 1024)
+                recentChange = app.store.listConversations()
+                    .asSequence()
+                    .flatMap { conversation -> conversation.messages.asSequence() }
+                    .filter { message -> message.fileChange?.path == path }
+                    .maxByOrNull { message -> message.timestamp }
+                    ?.fileChange
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                recentChange = null
+            }
+            if (isImage) return@withContext
+            try {
+                require(targetFile.isFile) { "文件不存在：$path" }
+                require(targetFile.length() <= 512 * 1024) { "文件过大，请分享后打开完整内容" }
+                content = targetFile.readText()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 loadError = e.message
             }
         }
     }
 
-    val imageFile = remember(path) { if (isImage) app.store.workspaceFile(path) else null }
+    val imageFile = remember(path) { if (isImage) targetFile else null }
 
     FileViewContent(
         path = path,
@@ -455,14 +481,15 @@ fun FileViewScreen(navController: NavHostController, path: String) {
         loadError = loadError,
         isImage = isImage,
         imageModel = imageFile,
+        recentChange = recentChange,
         onBack = { navController.safePopBackStack() },
         onSave = { newContent ->
-            app.store.writeWorkspace(path, newContent)
+            targetFile.writeText(newContent)
             content = newContent
         },
         onShare = {
             runCatching {
-                val file = app.store.workspaceFile(path)
+                val file = targetFile
                 val uri = FileProvider.getUriForFile(
                     context, "${context.packageName}.fileprovider", file
                 )
@@ -491,10 +518,16 @@ fun FileViewContent(
     onBack: () -> Unit,
     onSave: (String) -> Unit,
     onShare: () -> Unit,
-    initialEditing: Boolean = false
+    initialEditing: Boolean = false,
+    recentChange: FileChange? = null
 ) {
     var editing by remember { mutableStateOf(initialEditing) }
     var editBuffer by remember(content) { mutableStateOf(content ?: "") }
+    var selectedTab by remember(path, recentChange != null) { mutableStateOf(0) }
+
+    LaunchedEffect(recentChange) {
+        if (recentChange == null) selectedTab = 0
+    }
 
     Scaffold(
         topBar = {
@@ -512,6 +545,7 @@ fun FileViewContent(
                                 onSave(editBuffer)
                                 editing = false
                             } else {
+                                selectedTab = 0
                                 editBuffer = content
                                 editing = true
                             }
@@ -532,51 +566,74 @@ fun FileViewContent(
             )
         }
     ) { padding ->
-        when {
-            isImage -> {
-                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                    coil.compose.AsyncImage(
-                        model = imageModel,
-                        contentDescription = path,
-                        modifier = Modifier.fillMaxSize().padding(8.dp),
-                        contentScale = androidx.compose.ui.layout.ContentScale.Fit
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if (recentChange != null) {
+                TabRow(selectedTabIndex = selectedTab) {
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        text = { Text("内容") }
+                    )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        text = { Text("更改") }
                     )
                 }
             }
-            loadError != null -> Box(
-                Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "无法预览：$loadError\n（可尝试分享后用其他应用打开）",
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
-            editing -> OutlinedTextField(
-                value = editBuffer,
-                onValueChange = { editBuffer = it },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .imePadding()
-                    .padding(8.dp),
-                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-            )
-            content != null -> SelectionContainer {
-                Text(
-                    content,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .verticalScroll(rememberScrollState())
-                        .padding(16.dp)
-                        .padding(bottom = 24.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-            else -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("加载中…")
+            Box(Modifier.fillMaxSize()) {
+                if (recentChange != null && selectedTab == 1) {
+                    FileDiffContent(
+                        change = recentChange,
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp)
+                    )
+                } else {
+                    when {
+                        isImage -> {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                coil.compose.AsyncImage(
+                                    model = imageModel,
+                                    contentDescription = path,
+                                    modifier = Modifier.fillMaxSize().padding(8.dp),
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                                )
+                            }
+                        }
+                        loadError != null -> Box(
+                            Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "无法预览：$loadError\n（可尝试分享后用其他应用打开）",
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        editing -> OutlinedTextField(
+                            value = editBuffer,
+                            onValueChange = { editBuffer = it },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .imePadding()
+                                .padding(8.dp),
+                            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                        )
+                        content != null -> SelectionContainer {
+                            Text(
+                                content,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(16.dp)
+                                    .padding(bottom = 24.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                        else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("加载中…")
+                        }
+                    }
+                }
             }
         }
     }

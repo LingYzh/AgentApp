@@ -94,7 +94,7 @@ class ConversationsViewModel(private val app: AgentApp) : ViewModel() {
     val message = _message.asStateFlow()
 
     private suspend fun refreshData() {
-        _conversations.value = app.store.listConversations()
+        _conversations.value = app.store.listRootConversations()
         _agents.value = app.store.loadAgents()
     }
 
@@ -242,6 +242,7 @@ fun ConversationsContent(
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() }
 ) {
     var renameTarget by remember { mutableStateOf<Conversation?>(null) }
+    var deleteTarget by remember { mutableStateOf<Conversation?>(null) }
     var showAgentPicker by remember { mutableStateOf(false) }
     val selection = rememberListSelection(conversations.map { it.id }, conversations.associate { it.id to it.title })
 
@@ -277,7 +278,8 @@ fun ConversationsContent(
                     busy = busy,
                     onDelete = onDeleteSelected,
                     onImport = onImport,
-                    onExport = onExportSelected
+                    onExport = onExportSelected,
+                    deleteNotice = "所属子代理记录会一起删除；工作区文件保留。"
                 )
             }
         },
@@ -343,11 +345,26 @@ fun ConversationsContent(
                         },
                         onToggle = { if (!busy) selection.onToggle(conv.id) },
                         onRename = { renameTarget = conv },
-                        onDelete = { onDeleteConversation(conv.id) }
+                        onDelete = { deleteTarget = conv }
                     )
                 }
             }
         }
+    }
+
+    deleteTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("删除会话？") },
+            text = { Text("将删除「${target.title}」及其子代理记录。工作区文件保留。") },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteTarget = null
+                    onDeleteConversation(target.id)
+                }, enabled = !busy) { Text("删除") }
+            }
+        )
     }
 
     // 新会话：选择用哪个 Agent 开始

@@ -2,10 +2,13 @@ package com.example.myapplication
 
 import com.example.myapplication.agent.ToolExecutor
 import com.example.myapplication.agent.Tools
+import com.example.myapplication.data.model.FileChange
 import com.example.myapplication.data.store.FileStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -62,5 +65,36 @@ class ToolExecutorTest {
         } catch (e: CancellationException) {
             assertTrue(e.message?.contains("stopped") == true)
         }
+    }
+
+    @Test
+    fun `write file callback captures existing content before and after`() = runBlocking {
+        store.writeWorkspace("notes.txt", "before")
+        var change: FileChange? = null
+        val executor = ToolExecutor(store = store, onFileChange = { change = it })
+
+        executor.execute(Tools.WRITE_FILE, """{"path":"notes.txt","content":"after"}""")
+
+        assertEquals(
+            FileChange("notes.txt", before = "before", after = "after", beforeExists = true),
+            change
+        )
+    }
+
+    @Test
+    fun `write file callback marks new and same content writes`() = runBlocking {
+        val changes = mutableListOf<FileChange>()
+        val executor = ToolExecutor(store = store, onFileChange = { changes += it })
+
+        executor.execute(Tools.WRITE_FILE, """{"path":"new.txt","content":"same"}""")
+        executor.execute(Tools.WRITE_FILE, """{"path":"new.txt","content":"same"}""")
+
+        assertEquals(2, changes.size)
+        assertEquals(FileChange("new.txt", after = "same"), changes[0])
+        assertEquals(
+            FileChange("new.txt", before = "same", after = "same", beforeExists = true),
+            changes[1]
+        )
+        assertFalse(changes.any { it.previewOmitted })
     }
 }

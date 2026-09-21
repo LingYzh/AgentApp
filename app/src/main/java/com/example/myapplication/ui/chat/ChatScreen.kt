@@ -1,14 +1,42 @@
 package com.example.myapplication.ui.chat
 
+import com.example.myapplication.ui.components.MarkdownContent
+import androidx.compose.material3.*
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material.icons.filled.AccountTree
+import com.example.myapplication.agent.PermissionSession
+import com.example.myapplication.agent.ConversationContext
+import com.example.myapplication.agent.ContextCompactor
+import com.example.myapplication.agent.ContextWindows
+import com.example.myapplication.data.model.ContextOverview
+import com.example.myapplication.data.model.PermissionMode
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.webkit.MimeTypeMap
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.heightIn
+import androidx.lifecycle.compose.LifecycleStartEffect
+import com.example.myapplication.data.model.MessageAttachment
+import com.example.myapplication.data.store.ConversationEdits
+import kotlinx.coroutines.delay
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,6 +65,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -72,16 +101,21 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import com.example.myapplication.ui.theme.AgentTheme
 import androidx.lifecycle.ViewModel
@@ -103,14 +137,20 @@ import com.example.myapplication.data.model.ChatMessage
 import com.example.myapplication.data.model.Conversation
 import com.example.myapplication.data.model.ModelResolver
 import com.example.myapplication.data.model.ProviderConfig
+import com.example.myapplication.data.model.ReasoningEffort
+import com.example.myapplication.data.model.ReasoningSupport
+import com.example.myapplication.data.model.reasoningSupportFor
 import com.example.myapplication.provider.ProviderJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -121,9 +161,34 @@ class ChatViewModel(
 ) : ViewModel() {
 
     private var conversation: Conversation? = null
+    private var permissionSession: PermissionSession? = null
+    private val _permissionMode = MutableStateFlow(PermissionMode.ACCEPT_EDIT)
+    val permissionMode = _permissionMode.asStateFlow()
+    private val _plan = MutableStateFlow<String?>(null)
+    val plan = _plan.asStateFlow()
+    private val _scope = MutableStateFlow<List<String>>(emptyList())
+    val fileScope = _scope.asStateFlow()
     private var agents: List<AgentProfile> = emptyList()
     private var generationJob: Job? = null
     private var modelSaveJob: Job? = null
+    private var compactJob: Job? = null
+    private var contextRefreshJob: Job? = null
+    private var currentResolvedModel: ProviderConfig? = null
+    private var observationJob: Job? = null
+    private val _attachments = MutableStateFlow<List<MessageAttachment>>(emptyList())
+    val attachments = _attachments.asStateFlow()
+    private val _importing = MutableStateFlow(false)
+    val importing = _importing.asStateFlow()
+    private val _children = MutableStateFlow<List<Conversation>>(emptyList())
+    val children = _children.asStateFlow()
+    private val _childSnapshot = MutableStateFlow<Conversation?>(null)
+    val childSnapshot = _childSnapshot.asStateFlow()
+    private val _stopRequested = MutableStateFlow(false)
+    val stopRequested = _stopRequested.asStateFlow()
+    private val _isChild = MutableStateFlow(false)
+    val isChild = _isChild.asStateFlow()
+    private val _sendRevision = MutableStateFlow(0)
+    val sendRevision = _sendRevision.asStateFlow()
     private val _modelOptions = MutableStateFlow<List<Pair<ProviderConfig, String>>>(emptyList())
     val modelOptions = _modelOptions.asStateFlow()
 
@@ -141,6 +206,20 @@ class ChatViewModel(
 
     private val _streaming = MutableStateFlow(false)
     val streaming = _streaming.asStateFlow()
+    private val _historyBusy = MutableStateFlow(false)
+    val historyBusy = _historyBusy.asStateFlow()
+    private val _contextOverview = MutableStateFlow<ContextOverview?>(null)
+    val contextOverview = _contextOverview.asStateFlow()
+    private val _reasoningSupport = MutableStateFlow<ReasoningSupport?>(null)
+    val reasoningSupport = _reasoningSupport.asStateFlow()
+    private val _reasoningEffortOverride = MutableStateFlow<ReasoningEffort?>(null)
+    val reasoningEffortOverride = _reasoningEffortOverride.asStateFlow()
+    private val _modelReasoningEffort = MutableStateFlow<ReasoningEffort?>(null)
+    val modelReasoningEffort = _modelReasoningEffort.asStateFlow()
+    private val _compacting = MutableStateFlow(false)
+    val compacting = _compacting.asStateFlow()
+    private val _compactionProgress = MutableStateFlow<String?>(null)
+    val compactionProgress = _compactionProgress.asStateFlow()
 
     private val _toolStatus = MutableStateFlow<String?>(null)
     val toolStatus = _toolStatus.asStateFlow()
@@ -151,18 +230,29 @@ class ChatViewModel(
     init {
         viewModelScope.launch {
             val (loadedAgents, conv, config) = withContext(Dispatchers.IO) {
-                Triple(app.store.loadAgents(), app.store.loadConversation(conversationId), app.store.loadConfig())
+                val loaded = app.store.loadConversation(conversationId)
+                if (loaded != null && loaded.parentConversationId == null && ConversationContext.recoverRejectedAttachments(loaded)) {
+                    app.store.saveConversation(loaded)
+                }
+                Triple(app.store.loadAgents(), loaded, app.store.loadConfig())
             }
             agents = loadedAgents
             _modelOptions.value = config.providers.flatMap { p ->
-                p.models.ifEmpty { listOf(p.model) }.filter { it.isNotBlank() }.map { p to it }
+                (listOf(p.model) + p.models).filter { it.isNotBlank() }.distinct().map { p to it }
             }
             if (conv != null) {
                 conversation = conv
+                permissionSession = PermissionSession(app.store, conv, app.permissionCoordinator)
+                _permissionMode.value = conv.permissionMode
+                _scope.value = conv.allowedDirectories
+                _isChild.value = conv.parentConversationId != null
+                if (_isChild.value) _childSnapshot.value = conv
                 _messages.value = conv.messages.toList()
                 _title.value = conv.title
                 _agentProfile.value = conv.agentId?.let { id -> agents.firstOrNull { it.id == id } }
-                _currentModel.value = ModelResolver.resolve(conv, config, agents)?.model.orEmpty()
+                val resolved = ModelResolver.resolve(conv, config, agents)
+                updateResolvedModel(resolved)
+                refreshContextOverview(resolved = resolved)
             } else {
                 _error.value = "对话不存在"
             }
@@ -170,10 +260,23 @@ class ChatViewModel(
     }
 
     fun switchModel(providerId: String, model: String) {
-        if (_streaming.value) return
+        if (_streaming.value || _historyBusy.value || _compacting.value || _isChild.value) return
         val conv = conversation ?: return
         conv.providerIdOverride = providerId
         conv.modelOverride = model
+        val selected = _modelOptions.value.firstOrNull { it.first.id == providerId && it.second == model }
+        val resolved = selected?.first?.copy(model = model)
+        val priorEffort = conv.reasoningEffortOverride
+        val resetUnsupportedGatewayEffort = resolved?.let { next ->
+            priorEffort != null && next.type in setOf(
+                com.example.myapplication.data.model.ProviderType.GEMINI,
+                com.example.myapplication.data.model.ProviderType.CUSTOM
+            ) && priorEffort !in reasoningSupportFor(next.type, next.model).efforts
+        } == true
+        if (resetUnsupportedGatewayEffort) {
+            conv.reasoningEffortOverride = null
+            _error.value = "新模型不支持当前会话的思考强度，已改为跟随模型配置。"
+        }
         val snapshot = conv.copy(messages = conv.messages.toMutableList())
         val previousSave = modelSaveJob
         modelSaveJob = viewModelScope.launch {
@@ -187,10 +290,243 @@ class ChatViewModel(
             }
         }
         _currentModel.value = model
+        updateResolvedModel(resolved)
+        refreshContextOverview(resolved = resolved)
+    }
+
+    /** An in-flight request keeps its current value; this applies to its next model request. */
+    fun updateReasoningEffort(effort: ReasoningEffort?) {
+        if (_isChild.value || _compacting.value || _historyBusy.value) return
+        if (effort != null && effort !in _reasoningSupport.value?.efforts.orEmpty()) return
+        val conv = conversation ?: return
+        conv.reasoningEffortOverride = effort
+        _reasoningEffortOverride.value = effort
+        // AgentEngine saves this volatile field with its final conversation save. Encoding the
+        // mutable live conversation during a stream can otherwise race the provider callbacks.
+        if (_streaming.value) return
+        val snapshot = conv.copy(messages = conv.messages.toMutableList())
+        val previousSave = modelSaveJob
+        modelSaveJob = viewModelScope.launch {
+            previousSave?.join()
+            try {
+                withContext(Dispatchers.IO) { app.store.saveConversation(snapshot) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _error.value = error.message ?: "思考强度保存失败"
+            }
+        }
+    }
+
+    fun compactContext() {
+        if (_isChild.value || _streaming.value || _historyBusy.value || _compacting.value) return
+        val conv = conversation ?: return
+        _compacting.value = true
+        _historyBusy.value = true
+        _compactionProgress.value = "准备上下文…"
+        compactJob = viewModelScope.launch {
+            try {
+                modelSaveJob?.join()
+                val appConfig = withContext(Dispatchers.IO) { app.store.loadConfig() }
+                val resolved = ModelResolver.resolve(conv, appConfig, agents)
+                    ?: error("请先配置模型后再压缩上下文")
+                val snapshot = conv.copy(messages = conv.messages.toMutableList())
+                val result = withContext(Dispatchers.IO) {
+                    ContextCompactor(app.store, app.providerFactory).compact(snapshot, resolved) { progress ->
+                        _compactionProgress.value = progress
+                    }
+                }
+                currentCoroutineContext().ensureActive()
+                val persisted = conv.copy(
+                    messages = conv.messages.toMutableList(),
+                    contextCompaction = result
+                )
+                val committedOverview = withContext(Dispatchers.IO) {
+                    ContextWindows.overview(persisted, resolved, _agentProfile.value)
+                }
+                currentCoroutineContext().ensureActive()
+                // Once disk commit begins it must also update the live object, even if the
+                // user tapped cancel in the tiny interval after the provider finished.
+                withContext(NonCancellable + Dispatchers.IO) {
+                    app.store.saveConversation(persisted)
+                    conv.contextCompaction = result
+                    _contextOverview.value = committedOverview
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _error.value = error.message ?: "压缩上下文失败"
+            } finally {
+                _compactionProgress.value = null
+                _compacting.value = false
+                _historyBusy.value = false
+            }
+        }
+    }
+
+    fun cancelCompaction() {
+        compactJob?.cancel()
+    }
+
+    private fun updateResolvedModel(resolved: ProviderConfig?) {
+        currentResolvedModel = resolved
+        _currentModel.value = resolved?.model.orEmpty()
+        _reasoningSupport.value = resolved?.let { reasoningSupportFor(it.type, it.model) }
+        _modelReasoningEffort.value = resolved?.reasoningEffort
+        _reasoningEffortOverride.value = conversation?.reasoningEffortOverride
+    }
+
+    private fun refreshContextOverview(
+        conversationSnapshot: Conversation? = conversation,
+        resolved: ProviderConfig? = currentResolvedModel
+    ) {
+        val source = conversationSnapshot ?: return
+        val snapshot = source.copy(messages = source.messages.toMutableList())
+        val config = resolved ?: return
+        contextRefreshJob?.cancel()
+        contextRefreshJob = viewModelScope.launch {
+            val overview = withContext(Dispatchers.IO) {
+                ContextWindows.overview(snapshot, config, _agentProfile.value)
+            }
+            _contextOverview.value = overview
+        }
+    }
+
+    /** At most one full estimate per 750 ms while stream callbacks are changing messages. */
+    private fun scheduleContextOverviewRefresh() {
+        if (contextRefreshJob?.isActive == true) return
+        contextRefreshJob = viewModelScope.launch {
+            delay(750)
+            val source = conversation ?: return@launch
+            // Provider callbacks mutate Conversation on IO. The UI flow is an immutable list
+            // snapshot, so use it for the throttled estimate instead of iterating that live list.
+            val snapshot = source.copy(messages = _messages.value.toMutableList())
+            val config = currentResolvedModel ?: return@launch
+            val overview = withContext(Dispatchers.IO) {
+                ContextWindows.overview(snapshot, config, _agentProfile.value)
+            }
+            _contextOverview.value = overview
+        }
+    }
+
+    fun observeChildren() {
+        observationJob?.cancel()
+        observationJob = viewModelScope.launch {
+            while (true) {
+                if (_isChild.value) {
+                    val snapshot = withContext(Dispatchers.IO) { app.store.loadConversation(conversationId) }
+                    if (snapshot != null) {
+                        _childSnapshot.value = snapshot
+                        _messages.value = snapshot.messages.toList()
+                        refreshContextOverview(conversationSnapshot = snapshot)
+                    }
+                }
+                _children.value = withContext(Dispatchers.IO) {
+                    app.store.listConversations().filter { it.parentConversationId == conversationId }
+                }
+                _permissionMode.value = conversation?.permissionMode ?: PermissionMode.ACCEPT_EDIT
+                _plan.value = withContext(Dispatchers.IO) { runCatching { permissionSession?.readPlan() }.getOrNull() }
+                delay(1200)
+            }
+        }
+    }
+
+    fun updatePermissions(mode: PermissionMode, directories: List<String>) {
+        if (_isChild.value || _streaming.value || _historyBusy.value) return
+        viewModelScope.launch {
+            try {
+                val conv = conversation ?: return@launch
+                withContext(Dispatchers.IO) {
+                    val canonical = directories.map { directory ->
+                        require(java.io.File(directory).isAbsolute) { "目录范围请填写绝对路径" }
+                        java.io.File(directory).canonicalPath
+                    }.distinct()
+                    conv.allowedDirectories = canonical
+                    permissionSession?.setMode(mode)
+                    app.store.saveConversation(conv)
+                }
+                _permissionMode.value = conv.permissionMode
+                _scope.value = conv.allowedDirectories
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _error.value = error.message ?: "权限保存失败"
+            }
+        }
+    }
+
+    fun stopChild(reason: String) {
+        if (!_isChild.value || _stopRequested.value) return
+        if (app.subagentRegistry.stop(conversationId, reason)) _stopRequested.value = true
+        else _error.value = "子代理已结束，无法中止"
+    }
+
+    fun stopObservingChildren() { observationJob?.cancel() }
+
+    fun addAttachments(uris: List<Uri>) {
+        if (_isChild.value || _importing.value || _streaming.value || uris.isEmpty()) return
+        if (_attachments.value.size + uris.size > 8) {
+            _error.value = "每条消息最多添加 8 个附件"
+            return
+        }
+        _importing.value = true
+        viewModelScope.launch {
+            try {
+                val config = withContext(Dispatchers.IO) { app.store.loadConfig() }
+                val resolved = conversation?.let { ModelResolver.resolve(it, config, agents) }
+                for (uri in uris) {
+                    val imported = withContext(Dispatchers.IO) {
+                        val resolver = app.contentResolver
+                        var name = uri.lastPathSegment ?: "attachment"
+                        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                if (index >= 0) name = cursor.getString(index) ?: name
+                            }
+                        }
+                        val declared = resolver.getType(uri)
+                        val inferred = MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase())
+                        val mime = declared?.takeUnless { it == "application/octet-stream" } ?: inferred ?: "application/octet-stream"
+                        resolver.openInputStream(uri)?.use { app.attachmentStore.importFile(name, mime, it) }
+                            ?: error("无法读取 $name")
+                    }
+                    val native = resolved != null && app.attachmentStore.nativeRejection(resolved, imported) == null
+                    _attachments.value += imported.copy(delivery = if (native) "native" else "workspace")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _error.value = error.message ?: "添加附件失败"
+            } finally {
+                _importing.value = false
+            }
+        }
+    }
+
+    fun removeAttachment(id: String) {
+        if (!_streaming.value && !_isChild.value) _attachments.value = _attachments.value.filterNot { it.id == id }
+    }
+
+    fun toggleAttachment(id: String) {
+        if (_streaming.value || _isChild.value) return
+        viewModelScope.launch {
+            val config = withContext(Dispatchers.IO) { app.store.loadConfig() }
+            val resolved = conversation?.let { ModelResolver.resolve(it, config, agents) }
+            val attachment = _attachments.value.firstOrNull { it.id == id } ?: return@launch
+            val delivery = if (attachment.delivery == "native") "workspace" else "native"
+            if (delivery == "native") {
+                val reason = if (resolved == null) "请先配置模型" else app.attachmentStore.nativeRejection(resolved, attachment)
+                if (reason != null) {
+                    _error.value = "$reason；可在模型配置中开启对应能力，或使用工作区文件"
+                    return@launch
+                }
+            }
+            _attachments.value = _attachments.value.map { if (it.id == id) it.copy(delivery = delivery) else it }
+        }
     }
 
     fun send(text: String) {
-        if (text.isBlank() || _streaming.value) return
+        if ((text.isBlank() && _attachments.value.isEmpty()) || _streaming.value || _historyBusy.value || _importing.value || _isChild.value) return
         val conv = conversation ?: run {
             _error.value = "对话尚未加载完成"
             return
@@ -206,12 +542,27 @@ class ChatViewModel(
                     _error.value = "请先在「模型配置」中添加并选择一个模型"
                     return@launch
                 }
-                conv.messages += ChatMessage(role = "user", content = text.trim())
+                val attachments = _attachments.value.toList()
+                val message = ChatMessage(role = "user", content = text.trim(), attachments = attachments)
+                withContext(Dispatchers.IO) {
+                    ConversationContext.recoverRejectedAttachments(conv)
+                    val replayMessages = ContextWindows.replay(conv)
+                    require(resolved.type != com.example.myapplication.data.model.ProviderType.CUSTOM ||
+                        (attachments.isEmpty() && replayMessages.none { it.attachments.isNotEmpty() })) {
+                        "自定义模板不支持附件读取，请改用 OpenAI 兼容、Anthropic 或 Gemini 协议"
+                    }
+                    app.attachmentStore.validateNative(resolved, replayMessages.flatMap { it.attachments } + attachments)
+                    attachments.filter { it.delivery == "native" }.forEach { app.attachmentStore.fileFor(it) }
+                }
+                conv.messages += message
+                _attachments.value = emptyList()
+                _sendRevision.value++
                 if (conv.title == "新对话") {
-                    conv.title = text.trim().take(24)
+                    conv.title = text.trim().ifBlank { attachments.firstOrNull()?.name ?: "文件对话" }.take(24)
                     _title.value = conv.title
                 }
                 _messages.value = conv.messages.toList()
+                refreshContextOverview(resolved = resolved)
                 val engine = app.newAgentEngine(onSubagentStatus = { _toolStatus.value = it })
                 withContext(Dispatchers.IO) {
                     app.store.saveConversation(conv)
@@ -220,12 +571,17 @@ class ChatViewModel(
                         config = resolved,
                         maxLoops = appConfig.maxAgentLoops,
                         agentProfile = _agentProfile.value,
+                        permissionSession = permissionSession,
                         callbacks = AgentEngine.Callbacks(
-                            onMessageAdded = { _messages.value = _messages.value + it },
+                            onMessageAdded = {
+                                _messages.value = _messages.value + it
+                                scheduleContextOverviewRefresh()
+                            },
                             onMessageUpdated = { updated ->
                                 _messages.value = _messages.value.map {
                                     if (it.id == updated.id) updated else it
                                 }
+                                scheduleContextOverviewRefresh()
                             },
                             onToolStatus = { _toolStatus.value = it }
                         )
@@ -245,12 +601,53 @@ class ChatViewModel(
                 _streaming.value = false
                 _toolStatus.value = null
                 _messages.value = conv.messages.toList()
+                val appConfig = withContext(Dispatchers.IO) { app.store.loadConfig() }
+                refreshContextOverview(resolved = ModelResolver.resolve(conv, appConfig, agents))
             }
         }
     }
 
     fun stop() {
         generationJob?.cancel()
+    }
+
+    fun editMessage(id: String, text: String, attachmentIds: Set<String>, includeInContext: Boolean) {
+        changeHistory { ConversationEdits.edit(it, id, text, attachmentIds, includeInContext) }
+    }
+
+    fun deleteMessage(id: String) {
+        changeHistory { ConversationEdits.delete(it, id) }
+    }
+
+    private fun changeHistory(change: (List<ChatMessage>) -> List<ChatMessage>) {
+        if (_streaming.value || _historyBusy.value || _isChild.value) return
+        val conv = conversation ?: return
+        _historyBusy.value = true
+        viewModelScope.launch {
+            try {
+                modelSaveJob?.join()
+                val revised = change(conv.messages.toList())
+                val persisted = conv.copy(
+                    messages = revised.toMutableList(),
+                    contextCompaction = null,
+                    lastContextUsage = null
+                )
+                withContext(Dispatchers.IO) { app.store.saveConversation(persisted) }
+                conv.messages.clear()
+                conv.messages.addAll(revised)
+                conv.contextCompaction = null
+                conv.lastContextUsage = null
+                _messages.value = revised
+                val appConfig = withContext(Dispatchers.IO) { app.store.loadConfig() }
+                refreshContextOverview(resolved = ModelResolver.resolve(conv, appConfig, agents))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _error.value = error.message ?: "修改消息失败"
+            } finally {
+                _historyBusy.value = false
+            }
+        }
     }
 
     fun clearError() {
@@ -271,10 +668,39 @@ fun ChatScreen(navController: NavHostController, conversationId: String) {
     val agentProfile by vm.agentProfile.collectAsStateWithLifecycle()
     val currentModel by vm.currentModel.collectAsStateWithLifecycle()
     val streaming by vm.streaming.collectAsStateWithLifecycle()
+    val historyBusy by vm.historyBusy.collectAsStateWithLifecycle()
+    val contextOverview by vm.contextOverview.collectAsStateWithLifecycle()
+    val reasoningSupport by vm.reasoningSupport.collectAsStateWithLifecycle()
+    val reasoningEffortOverride by vm.reasoningEffortOverride.collectAsStateWithLifecycle()
+    val modelReasoningEffort by vm.modelReasoningEffort.collectAsStateWithLifecycle()
+    val compacting by vm.compacting.collectAsStateWithLifecycle()
+    val compactionProgress by vm.compactionProgress.collectAsStateWithLifecycle()
     val toolStatus by vm.toolStatus.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val modelOptions by vm.modelOptions.collectAsStateWithLifecycle()
+    val attachments by vm.attachments.collectAsStateWithLifecycle()
+    val importing by vm.importing.collectAsStateWithLifecycle()
+    val children by vm.children.collectAsStateWithLifecycle()
+    val isChild by vm.isChild.collectAsStateWithLifecycle()
+    val childSnapshot by vm.childSnapshot.collectAsStateWithLifecycle()
+    val stopRequested by vm.stopRequested.collectAsStateWithLifecycle()
+    val sendRevision by vm.sendRevision.collectAsStateWithLifecycle()
+    val permissionMode by vm.permissionMode.collectAsStateWithLifecycle()
+    val fileScope by vm.fileScope.collectAsStateWithLifecycle()
+    val plan by vm.plan.collectAsStateWithLifecycle()
+    val pending by app.permissionCoordinator.pending.collectAsStateWithLifecycle()
+    pending.firstOrNull { it.conversationId == conversationId }?.let { request ->
+        PermissionRequestDialog(request) { decision, feedback ->
+            app.permissionCoordinator.resolve(request.id, decision, feedback)
+        }
+    }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { vm.addAttachments(it) }
     val snackbar = remember { SnackbarHostState() }
+
+    LifecycleStartEffect(vm) {
+        vm.observeChildren()
+        onStopOrDispose { vm.stopObservingChildren() }
+    }
 
     LaunchedEffect(error) {
         error?.let {
@@ -293,10 +719,41 @@ fun ChatScreen(navController: NavHostController, conversationId: String) {
         modelOptions = modelOptions,
         onBack = { navController.safePopBackStack() },
         onSwitchModel = { providerId, model -> vm.switchModel(providerId, model) },
+        contextOverview = contextOverview,
+        reasoningSupport = reasoningSupport,
+        reasoningEffortOverride = reasoningEffortOverride,
+        modelReasoningEffort = modelReasoningEffort,
+        compacting = compacting,
+        compactionProgress = compactionProgress,
+        onUpdateReasoningEffort = vm::updateReasoningEffort,
+        onCompactContext = vm::compactContext,
+        onCancelCompaction = vm::cancelCompaction,
         onSendMessage = { vm.send(it) },
         onStop = { vm.stop() },
         onViewFile = { path -> navController.safeNavigateDirect(Routes.fileView(path)) },
-        snackbarHostState = snackbar
+        snackbarHostState = snackbar,
+        attachments = attachments,
+        importing = importing,
+        children = children,
+        readOnly = isChild,
+        waitingForParentApproval = isChild && pending.any { it.conversationId == childSnapshot?.parentConversationId },
+        permissionMode = permissionMode,
+        fileScope = fileScope,
+        planContent = plan,
+        onUpdatePermissions = vm::updatePermissions,
+        historyBusy = historyBusy,
+        onEditMessage = vm::editMessage,
+        onDeleteMessage = vm::deleteMessage,
+        childExecutionStatus = childSnapshot?.executionStatus,
+        childStopReason = childSnapshot?.stopReason,
+        canStopChild = childSnapshot?.executionStatus == "running" && !stopRequested,
+        onStopChild = vm::stopChild,
+        onOpenChild = { navController.safeNavigateDirect(Routes.chat(it)) },
+        sendRevision = sendRevision,
+        onAddAttachments = { picker.launch(arrayOf("*/*")) },
+        onRemoveAttachment = vm::removeAttachment,
+        onToggleAttachment = vm::toggleAttachment,
+        attachmentFile = { runCatching { app.store.workspaceFile(it.workspacePath) }.getOrNull() }
     )
 }
 
@@ -315,206 +772,490 @@ fun ChatContent(
     modelOptions: List<Pair<ProviderConfig, String>>,
     onBack: () -> Unit,
     onSwitchModel: (providerId: String, model: String) -> Unit,
+    contextOverview: ContextOverview? = null,
+    reasoningSupport: ReasoningSupport? = null,
+    reasoningEffortOverride: ReasoningEffort? = null,
+    modelReasoningEffort: ReasoningEffort? = null,
+    compacting: Boolean = false,
+    compactionProgress: String? = null,
+    onUpdateReasoningEffort: (ReasoningEffort?) -> Unit = {},
+    onCompactContext: () -> Unit = {},
+    onCancelCompaction: () -> Unit = {},
     onSendMessage: (String) -> Unit,
     onViewFile: (String) -> Unit,
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
-    onStop: () -> Unit = {}
+    onStop: () -> Unit = {},
+    attachments: List<MessageAttachment> = emptyList(),
+    importing: Boolean = false,
+    children: List<Conversation> = emptyList(),
+    readOnly: Boolean = false,
+    waitingForParentApproval: Boolean = false,
+    permissionMode: PermissionMode = PermissionMode.ACCEPT_EDIT,
+    fileScope: List<String> = emptyList(),
+    planContent: String? = null,
+    onUpdatePermissions: (PermissionMode, List<String>) -> Unit = { _, _ -> },
+    childExecutionStatus: String? = null,
+    childStopReason: String? = null,
+    canStopChild: Boolean = false,
+    onStopChild: (String) -> Unit = {},
+    onOpenChild: (String) -> Unit = {},
+    sendRevision: Int = 0,
+    onAddAttachments: () -> Unit = {},
+    onRemoveAttachment: (String) -> Unit = {},
+    onToggleAttachment: (String) -> Unit = {},
+    attachmentFile: (MessageAttachment) -> java.io.File? = { null },
+    historyBusy: Boolean = false,
+    onEditMessage: (String, String, Set<String>, Boolean) -> Unit = { _, _, _, _ -> },
+    onDeleteMessage: (String) -> Unit = {}
 ) {
     val listState = rememberLazyListState()
-    var input by remember { mutableStateOf("") }
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val isUserDragging by listState.interactionSource.collectIsDraggedAsState()
+    var input by rememberSaveable { mutableStateOf("") }
+    var submittedInput by rememberSaveable { mutableStateOf<String?>(null) }
     var modelMenuExpanded by remember { mutableStateOf(false) }
+    var showPermissions by remember { mutableStateOf(false) }
+    var showPlan by remember { mutableStateOf(false) }
+    var showContextUsage by remember { mutableStateOf(false) }
+    var previewAttachment by remember { mutableStateOf<MessageAttachment?>(null) }
+    var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    var deletingMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    previewAttachment?.let { attachment ->
+        AttachmentPreviewDialog(attachment, attachmentFile(attachment)) { previewAttachment = null }
+    }
+    editingMessage?.let { message ->
+        EditMessageDialog(message, onDismiss = { editingMessage = null }) { text, ids, included ->
+            onEditMessage(message.id, text, ids, included)
+            editingMessage = null
+        }
+    }
+    deletingMessage?.let { message ->
+        AlertDialog(onDismissRequest = { deletingMessage = null }, title = { Text("删除这条消息？") },
+            text = { Text(if (message.toolCalls.isEmpty()) "这会改变后续请求的历史内容及缓存。其他消息会保留。"
+                else "这条消息及关联的工具记录将从对话中删除。已执行的文件修改不会撤销，子代理会话仍保留在会话面板中。") },
+            confirmButton = { TextButton(onClick = { onDeleteMessage(message.id); deletingMessage = null }) { Text("删除") } },
+            dismissButton = { TextButton(onClick = { deletingMessage = null }) { Text("取消") } })
+    }
+    if (showPermissions) SessionPermissionsDialog(permissionMode, fileScope,
+        onDismiss = { showPermissions = false }, onSave = { mode, directories ->
+            onUpdatePermissions(mode, directories); showPermissions = false
+        })
+    if (showPlan) PlanDocumentDialog(planContent.orEmpty()) { showPlan = false }
+    if (showContextUsage) {
+        ContextUsageSheet(
+            overview = contextOverview,
+            isCompacting = compacting,
+            compactionProgress = compactionProgress,
+            canCompact = !readOnly && !streaming && !historyBusy && !compacting,
+            onCompact = onCompactContext,
+            onCancelCompaction = onCancelCompaction,
+            onDismiss = { showContextUsage = false }
+        )
+    }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    var stopDialog by remember { mutableStateOf(false) }
+    var stopReason by rememberSaveable { mutableStateOf("") }
+    val toolResults = remember(messages) { messages.filter { it.role == "tool" }.associateBy { it.toolCallId } }
+    val callIds = remember(messages) { messages.flatMap { it.toolCalls }.map { it.id }.toSet() }
+    val displayMessages = remember(messages) { messages.filterNot { it.contextKind != null || it.originToolCallId != null || (it.role == "tool" && it.toolCallId in callIds) } }
+    var consumedSendRevision by rememberSaveable { mutableStateOf(sendRevision) }
+    LaunchedEffect(sendRevision) {
+        if (sendRevision != consumedSendRevision) {
+            if (input == submittedInput) input = ""
+            submittedInput = null
+            consumedSendRevision = sendRevision
+        }
+    }
+    if (stopDialog) AlertDialog(
+        onDismissRequest = { stopDialog = false },
+        title = { Text("中止子代理") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("确认后将停止此子代理，并将理由通知主代理。")
+            OutlinedTextField(value = stopReason, onValueChange = { stopReason = it },
+                label = { Text("中止理由（可选）") }, maxLines = 5)
+        } },
+        confirmButton = { TextButton(onClick = { onStopChild(stopReason); stopDialog = false }) { Text("确认中止") } },
+        dismissButton = { TextButton(onClick = { stopDialog = false }) { Text("取消") } }
+    )
 
-    // 仅当用户已在底部附近时才跟随流式滚动，避免打断翻看历史
-    LaunchedEffect(messages.size, messages.lastOrNull()?.content?.length) {
-        if (messages.isEmpty()) return@LaunchedEffect
-        val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-        if (lastVisible >= messages.size - 2) {
-            listState.scrollToItem(messages.size - 1)
+    var followLatest by rememberSaveable { mutableStateOf(true) }
+    var scrollRequest by remember { mutableStateOf(0) }
+    val streamingMessageId = displayMessages.lastOrNull()?.id
+    val extraRows = if (readOnly) 1 else 0
+    var userScrollPending by remember { mutableStateOf(false) }
+    val userScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput && available.y != 0f) {
+                    userScrollPending = true
+                }
+                return Offset.Zero
+            }
         }
     }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = {
-            TopAppBar(
-                title = {
-                    Box {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            agentProfile?.let { prof ->
-                                AgentAvatar(
-                                    emoji = prof.emoji,
-                                    avatarPath = prof.avatarPath,
-                                    size = 32.dp
-                                )
-                                Spacer(Modifier.width(8.dp))
-                            }
-                            Column {
-                                Text(
-                                    title,
-                                    maxLines = 1,
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                // 会话内模型切换（只影响本会话）
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.clickable(enabled = !streaming) {
-                                        modelMenuExpanded = true
-                                    }
-                                ) {
-                                    Text(
-                                        currentModel.ifBlank { "未配置模型" },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary
+    // Layout changes include AndroidView's delayed Markdown measurements. They drive following so
+    // a throttled render or a table's final height still reaches the actual bottom.
+    LaunchedEffect(listState, displayMessages.size, extraRows, scrollRequest) {
+        snapshotFlow {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()
+            ChatListViewport(
+                lastVisible?.index,
+                lastVisible?.let { it.offset + it.size },
+                listState.layoutInfo.viewportEndOffset,
+                displayMessages.size + extraRows - 1,
+                listState.isScrollInProgress,
+                isUserDragging,
+                userScrollPending
+            )
+        }.collect { viewport ->
+            if (viewport.lastItemIndex < 0) return@collect
+            val atBottom = listIsAtBottom(
+                viewport.lastVisibleIndex,
+                viewport.lastVisibleEnd,
+                viewport.viewportEnd,
+                viewport.lastItemIndex
+            )
+            val exactlyAtBottom = listIsAtBottom(
+                viewport.lastVisibleIndex,
+                viewport.lastVisibleEnd,
+                viewport.viewportEnd,
+                viewport.lastItemIndex,
+                tolerancePx = 0
+            )
+            val userScrolling = viewport.isUserDragging || viewport.userScrollPending
+            followLatest = updateFollowLatest(followLatest, userScrolling, atBottom)
+            if (userScrollPending && !viewport.isUserDragging && !viewport.isScrollInProgress) {
+                userScrollPending = false
+            }
+            if (followLatest && !userScrolling && !exactlyAtBottom) {
+                listState.scrollToChatBottom(viewport.lastItemIndex)
+            }
+        }
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = !readOnly,
+        drawerContent = {
+            SessionDrawer(children, onOpen = { id ->
+                scope.launch { drawerState.close(); onOpenChild(id) }
+            }, planContent = planContent, onOpenPlan = {
+                scope.launch { drawerState.close(); showPlan = true }
+            })
+        }
+    ) {
+        Scaffold(
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Box {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                agentProfile?.let { prof ->
+                                    AgentAvatar(
+                                        emoji = prof.emoji,
+                                        avatarPath = prof.avatarPath,
+                                        size = 32.dp
                                     )
-                                    Icon(
-                                        Icons.Filled.ArrowDropDown, "切换模型",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
+                                    Spacer(Modifier.width(8.dp))
+                                }
+                                Column {
+                                    Text(
+                                        title,
+                                        maxLines = 1,
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    // 会话内模型切换（只影响本会话）
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.clickable(enabled = !streaming && !historyBusy && !readOnly) {
+                                            modelMenuExpanded = true
+                                        }
+                                    ) {
+                                        Text(
+                                            currentModel.ifBlank { "未配置模型" },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Icon(
+                                            Icons.Filled.ArrowDropDown, "切换模型",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            DropdownMenu(
+                                expanded = modelMenuExpanded,
+                                onDismissRequest = { modelMenuExpanded = false }
+                            ) {
+                                modelOptions.forEach { (provider, model) ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Column {
+                                                Text(model)
+                                                Text(
+                                                    provider.name.ifBlank { provider.type.label },
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        },
+                                        onClick = {
+                                            onSwitchModel(provider.id, model)
+                                            modelMenuExpanded = false
+                                        }
                                     )
                                 }
                             }
                         }
-                        DropdownMenu(
-                            expanded = modelMenuExpanded,
-                            onDismissRequest = { modelMenuExpanded = false }
+                    },
+                    actions = {
+                        if (readOnly) {
+                            TextButton(onClick = { stopDialog = true }, enabled = canStopChild) { Text("中止") }
+                        } else IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                            Icon(Icons.Default.AccountTree, "会话面板 · 子代理 ${children.size}")
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onSurface
+                    )
+                )
+            },
+            bottomBar = {
+                if (!readOnly) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        tonalElevation = 2.dp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .imePadding()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .navigationBarsPadding()
                         ) {
-                            modelOptions.forEach { (provider, model) ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(model)
-                                            Text(
-                                                provider.name.ifBlank { provider.type.label },
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    },
-                                    onClick = {
-                                        onSwitchModel(provider.id, model)
-                                        modelMenuExpanded = false
-                                    }
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                TextButton(
+                                    onClick = { showPermissions = true },
+                                    enabled = !streaming && !historyBusy,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                ) {
+                                    Text(permissionMode.label + if (fileScope.isNotEmpty()) " · ${fileScope.size} 个目录" else " · 全目录", maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                }
+                                ReasoningEffortMenu(
+                                    support = reasoningSupport,
+                                    override = reasoningEffortOverride,
+                                    modelDefault = modelReasoningEffort,
+                                    enabled = !compacting,
+                                    onChange = onUpdateReasoningEffort
                                 )
                             }
-                        }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface
-                )
-            )
-        },
-        bottomBar = {
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainer,
-                tonalElevation = 2.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .imePadding()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                ) {
-                    if (streaming) {
-                        LinearProgressIndicator(Modifier.fillMaxWidth())
-                    }
-                    toolStatus?.let {
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(
-                                Modifier.padding(end = 8.dp).size(16.dp),
-                                strokeWidth = 2.dp
-                            )
-                            Text(
-                                it,
-                                style = MaterialTheme.typography.bodySmall,
+                            ContextUsageBar(overview = contextOverview, onClick = { showContextUsage = true })
+                            if (streaming) Text(
+                                "思考强度调整会从下一次模型请求生效。",
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                                style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        }
-                    }
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.Bottom,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = input,
-                            onValueChange = { input = it },
-                            modifier = Modifier.weight(1f),
-                            placeholder = { Text("输入消息…") },
-                            shape = ExpressiveTokens.CardShape,
-                            maxLines = 5
-                        )
-                        IconButton(
-                            onClick = {
-                                if (streaming) {
-                                    onStop()
-                                } else {
-                                    onSendMessage(input)
-                                    input = ""
+                            if (streaming) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                            }
+                            toolStatus?.let {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    CircularProgressIndicator(
+                                        Modifier.padding(end = 8.dp).size(16.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                    Text(
+                                        it,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
-                            },
-                            enabled = streaming || input.isNotBlank(),
-                            modifier = Modifier.padding(bottom = 4.dp)
-                        ) {
-                            Icon(
-                                if (streaming) Icons.Filled.Stop else Icons.AutoMirrored.Filled.Send,
-                                contentDescription = if (streaming) "停止生成" else "发送",
-                                tint = if (streaming || input.isNotBlank()) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                            }
+                            if (attachments.isNotEmpty()) {
+                                Column(Modifier.heightIn(max = 180.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                                    attachments.forEach { attachment ->
+                                        AttachmentChip(attachment, attachmentFile(attachment),
+                                            onToggle = { onToggleAttachment(attachment.id) },
+                                            onRemove = { onRemoveAttachment(attachment.id) }, enabled = !streaming && !importing && !historyBusy)
+                                    }
                                 }
-                            )
+                            }
+                            if (importing) Text("正在复制附件…", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.Bottom,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                IconButton(onClick = onAddAttachments, enabled = !streaming && !importing && !historyBusy) {
+                                    Icon(Icons.Filled.AttachFile, "添加文件")
+                                }
+                                OutlinedTextField(
+                                    value = input,
+                                    onValueChange = { input = it },
+                                    modifier = Modifier.weight(1f),
+                                    placeholder = { Text("输入消息…") },
+                                    shape = ExpressiveTokens.CardShape,
+                                    maxLines = 5,
+                                    enabled = !historyBusy
+                                )
+                                IconButton(
+                                    onClick = {
+                                        if (streaming) {
+                                            onStop()
+                                        } else {
+                                            submittedInput = input
+                                            followLatest = true
+                                            scrollRequest++
+                                            focusManager.clearFocus()
+                                            keyboardController?.hide()
+                                            onSendMessage(input)
+                                        }
+                                    },
+                                    enabled = streaming || (!historyBusy && !importing && (input.isNotBlank() || attachments.isNotEmpty())),
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                ) {
+                                    Icon(
+                                        if (streaming) Icons.Filled.Stop else Icons.AutoMirrored.Filled.Send,
+                                        contentDescription = if (streaming) "停止生成" else "发送",
+                                        tint = if (streaming || input.isNotBlank() || attachments.isNotEmpty()) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
-        }
-    ) { padding ->
-        if (messages.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text(
-                    "开始对话吧。Agent 可以生成文件、保存记忆、调用 Skills 和委派子代理。",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(32.dp)
-                )
-            }
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(messages, key = { it.id }) { msg ->
-                    MessageBubble(
-                        msg = msg,
-                        agentProfile = agentProfile,
-                        onViewFile = onViewFile
+        ) { padding ->
+            if (messages.isEmpty()) {
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                    Text(
+                        "开始对话吧。Agent 可以生成文件、保存记忆、调用 Skills 和委派子代理。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(32.dp)
                     )
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .nestedScroll(userScrollConnection),
+                    contentPadding = PaddingValues(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (readOnly) item(key = "child-status") {
+                        Column(Modifier.padding(8.dp)) {
+                            Text("只读 · ${childStatus(childExecutionStatus)}", style = MaterialTheme.typography.labelLarge)
+                            if (waitingForParentApproval) Text("主会话有待处理的授权，请返回主会话查看。",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                            childStopReason?.takeIf { it.isNotBlank() }?.let { Text("中止理由：$it", style = MaterialTheme.typography.bodySmall) }
+                        }
+                    }
+                    items(displayMessages, key = { it.id }) { msg ->
+                        MessageBubble(
+                            msg = msg,
+                            agentProfile = agentProfile,
+                            streaming = streaming && msg.id == streamingMessageId,
+                            onViewFile = onViewFile,
+                            toolResults = toolResults,
+                            running = streaming || childExecutionStatus == "running",
+                            children = children,
+                            onOpenChild = onOpenChild,
+                            allowFileNavigation = !readOnly,
+                            attachmentFile = attachmentFile,
+                            onOpenAttachment = { previewAttachment = it },
+                            canEdit = !readOnly && !streaming && !historyBusy,
+                            onEdit = { editingMessage = msg },
+                            onDelete = { deletingMessage = msg },
+                            activeToolCallId = if (toolStatus == null && childExecutionStatus != "running") null else messages.flatMap { it.toolCalls }.firstOrNull { it.id !in toolResults }?.id
+                        )
+                    }
                 }
             }
         }
     }
 }
 
+/** Returns whether the last row is visible through the bottom edge of the viewport. */
+private data class ChatListViewport(
+    val lastVisibleIndex: Int?,
+    val lastVisibleEnd: Int?,
+    val viewportEnd: Int,
+    val lastItemIndex: Int,
+    val isScrollInProgress: Boolean,
+    val isUserDragging: Boolean,
+    val userScrollPending: Boolean
+)
+
+internal fun listIsAtBottom(
+    lastVisibleIndex: Int?,
+    lastVisibleEnd: Int?,
+    viewportEnd: Int,
+    lastItemIndex: Int,
+    tolerancePx: Int = 80
+): Boolean =
+    lastItemIndex >= 0 &&
+        lastVisibleIndex != null &&
+        lastVisibleEnd != null &&
+        lastVisibleIndex >= lastItemIndex &&
+        lastVisibleEnd <= viewportEnd + tolerancePx
+
+/** Only user-initiated movement changes whether streamed output may take over the list. */
+internal fun updateFollowLatest(
+    current: Boolean,
+    userScrolling: Boolean,
+    atBottom: Boolean
+): Boolean = if (userScrolling) atBottom else current
+
+private suspend fun androidx.compose.foundation.lazy.LazyListState.scrollToChatBottom(lastItemIndex: Int) {
+    var lastItem = layoutInfo.visibleItemsInfo.lastOrNull { it.index == lastItemIndex }
+    if (lastItem == null) {
+        scrollToItem(lastItemIndex)
+        lastItem = layoutInfo.visibleItemsInfo.lastOrNull { it.index == lastItemIndex }
+    }
+    lastItem?.let { item ->
+        val distance = (item.offset + item.size - layoutInfo.viewportEndOffset).coerceAtLeast(0)
+        if (distance > 0) scrollBy(distance.toFloat())
+    }
+}
+
 /** 提取工具调用的友好动作名称（无 emoji） */
-private fun friendlyToolTitle(toolName: String?): String = when (toolName) {
+internal fun friendlyToolTitle(toolName: String?): String = when (toolName) {
     Tools.WRITE_FILE -> "写入文件"
+    Tools.DELETE_FILE -> "删除文件"
+    Tools.EDIT_FILE -> "修改文件"
+    Tools.RUN_COMMAND -> "执行命令"
+    Tools.ENTER_PLAN_MODE -> "进入计划模式"
+    Tools.EXIT_PLAN_MODE -> "提交计划"
     Tools.READ_FILE -> "读取文件"
     Tools.LIST_FILES -> "查看工作区文件"
     Tools.SAVE_MEMORY -> "保存记忆"
@@ -527,8 +1268,9 @@ private fun friendlyToolTitle(toolName: String?): String = when (toolName) {
 }
 
 /** 统一风格的工具对应矢量图标 */
-private fun toolIcon(toolName: String?): ImageVector = when (toolName) {
-    Tools.WRITE_FILE, Tools.READ_FILE -> Icons.Outlined.Description
+internal fun toolIcon(toolName: String?): ImageVector = when (toolName) {
+    Tools.WRITE_FILE, Tools.EDIT_FILE, Tools.READ_FILE, Tools.ENTER_PLAN_MODE, Tools.EXIT_PLAN_MODE -> Icons.Outlined.Description
+    Tools.DELETE_FILE -> Icons.Filled.Delete
     Tools.LIST_FILES -> Icons.Outlined.Folder
     Tools.SAVE_MEMORY, Tools.SEARCH_MEMORY, Tools.DELETE_MEMORY -> Icons.Outlined.Bookmark
     Tools.USE_SKILL, Tools.SAVE_SKILL -> Icons.Outlined.Bolt
@@ -537,142 +1279,58 @@ private fun toolIcon(toolName: String?): ImageVector = when (toolName) {
 }
 
 /** 从工具调用参数中提取文件路径（write_file / read_file 可预览） */
-private fun extractFilePath(argumentsJson: String): String? =
+internal fun extractFilePath(argumentsJson: String): String? =
     runCatching {
         ProviderJson.parseToJsonElement(argumentsJson).jsonObject["path"]
             ?.jsonPrimitive?.content
     }.getOrNull()
 
 @Composable
-private fun MessageBubble(
+internal fun MessageBubble(
     msg: ChatMessage,
     agentProfile: AgentProfile?,
-    onViewFile: (String) -> Unit
+    onViewFile: (String) -> Unit,
+    streaming: Boolean = false,
+    toolResults: Map<String?, ChatMessage> = emptyMap(),
+    running: Boolean = false,
+    children: List<Conversation> = emptyList(),
+    onOpenChild: (String) -> Unit = {},
+    attachmentFile: (MessageAttachment) -> java.io.File? = { null },
+    activeToolCallId: String? = null,
+    allowFileNavigation: Boolean = true,
+    onOpenAttachment: (MessageAttachment) -> Unit = {},
+    canEdit: Boolean = false,
+    onEdit: () -> Unit = {},
+    onDelete: () -> Unit = {}
 ) {
     when (msg.role) {
         "user" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Card(
-                shape = ExpressiveTokens.CardShape,
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                ),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.widthIn(max = 320.dp)
-            ) {
-                SelectionContainer {
-                    Text(
-                        msg.content,
-                        Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            }
-        }
-        "tool" -> ToolMessageBlock(msg)
-        else -> Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Start
-        ) {
-            AgentAvatar(
-                emoji = agentProfile?.emoji ?: "🤖",
-                avatarPath = agentProfile?.avatarPath,
-                size = 32.dp,
-                modifier = Modifier.padding(top = 4.dp, end = 8.dp)
-            )
-            Column(Modifier.weight(1f, fill = false)) {
-                if (msg.thinking.isNotBlank()) {
-                    ThinkingBlock(msg.thinking)
-                }
-                if (msg.content.isNotBlank() || msg.toolCalls.isNotEmpty()) {
-                    Card(
-                        shape = ExpressiveTokens.CardShape,
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                            contentColor = MaterialTheme.colorScheme.onSurface
-                        ),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        modifier = Modifier.widthIn(max = 340.dp)
-                    ) {
-                        Column(Modifier.padding(14.dp)) {
-                            if (msg.content.isNotBlank()) {
-                                SelectionContainer { Text(msg.content) }
-                            }
-                            msg.toolCalls.forEach { tc ->
-                                var callExpanded by remember { mutableStateOf(false) }
-                                Spacer(Modifier.height(6.dp))
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceContainer)
-                                        .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), RoundedCornerShape(8.dp))
-                                        .clickable { callExpanded = !callExpanded }
-                                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = toolIcon(tc.name),
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                        Spacer(Modifier.width(6.dp))
-                                        Text(
-                                            text = "调用 ${friendlyToolTitle(tc.name)}",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        if (tc.name == Tools.WRITE_FILE || tc.name == Tools.READ_FILE) {
-                                            extractFilePath(tc.argumentsJson)?.let { path ->
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    modifier = Modifier
-                                                        .padding(end = 4.dp)
-                                                        .clip(RoundedCornerShape(6.dp))
-                                                        .clickable { onViewFile(path) }
-                                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Outlined.FileOpen,
-                                                        contentDescription = "查看文件",
-                                                        tint = MaterialTheme.colorScheme.tertiary,
-                                                        modifier = Modifier.size(14.dp)
-                                                    )
-                                                    Spacer(Modifier.width(3.dp))
-                                                    Text(
-                                                        text = "查看",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = MaterialTheme.colorScheme.tertiary
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        Icon(
-                                            imageVector = if (callExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                    }
-                                    AnimatedVisibility(visible = callExpanded) {
-                                        SelectionContainer {
-                                            Text(
-                                                text = tc.argumentsJson,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                fontFamily = FontFamily.Monospace,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.padding(top = 4.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
+            Column(Modifier.widthIn(max = 340.dp), horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                msg.attachments.forEach { attachment ->
+                    Box(Modifier.clickable(onClickLabel = "预览附件") { onOpenAttachment(attachment) }) {
+                        AttachmentChip(attachment, attachmentFile(attachment))
                     }
                 }
+                if (msg.content.isNotBlank()) Card(
+                    shape = ExpressiveTokens.CardShape,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) { SelectionContainer { Text(msg.content, Modifier.padding(12.dp)) } }
+                MessageActions(msg, canEdit, onEdit, onDelete)
             }
+        }
+        "tool" -> if (msg.toolName == Tools.RUN_SUBAGENT) Text("子代理 · ${if (msg.isError) "已停止或失败" else "已完成"}", style = MaterialTheme.typography.labelMedium) else ToolMessageBlock(msg)
+        else -> Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+            if (msg.thinking.isNotBlank()) ThinkingBlock(msg.thinking, streaming)
+            if (msg.content.isNotBlank()) {
+                MarkdownContent(msg.content, Modifier.fillMaxWidth().padding(vertical = 6.dp), streaming)
+            }
+            msg.toolCalls.forEach { call ->
+                ToolActivityRow(call, toolResults[call.id], running && activeToolCallId == call.id,
+                    child = children.firstOrNull { it.parentToolCallId == call.id },
+                    onOpenChild = onOpenChild, onViewFile = onViewFile, queued = running && activeToolCallId != call.id, allowFileNavigation = allowFileNavigation)
+            }
+            MessageActions(msg, canEdit, onEdit, onDelete)
         }
     }
 }
@@ -681,7 +1339,7 @@ private fun MessageBubble(
  * 极简思考过程呈现组件（主流移动端 AI 风格，无 Card 容器）
  */
 @Composable
-private fun ThinkingBlock(thinking: String) {
+private fun ThinkingBlock(thinking: String, streaming: Boolean = false) {
     var expanded by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
@@ -741,13 +1399,7 @@ private fun ThinkingBlock(thinking: String) {
                         )
                 )
                 Spacer(Modifier.width(10.dp))
-                SelectionContainer {
-                    Text(
-                        text = thinking,
-                        style = MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                MarkdownContent(thinking, Modifier.weight(1f), streaming)
             }
         }
     }

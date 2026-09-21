@@ -7,6 +7,8 @@ import com.example.myapplication.data.model.ChatMessage
 import com.example.myapplication.data.model.Conversation
 import com.example.myapplication.data.model.ProviderConfig
 import com.example.myapplication.data.model.ProviderType
+import com.example.myapplication.data.model.PermissionMode
+import com.example.myapplication.data.model.MessageAttachment
 import com.example.myapplication.data.store.FileStore
 import com.example.myapplication.provider.ApiProvider
 import com.example.myapplication.provider.ProviderFactory
@@ -20,6 +22,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -33,6 +36,7 @@ private class FakeProvider(
     val receivedTools = mutableListOf<List<ToolSpec>>()
     val receivedMessages = mutableListOf<List<ChatMessage>>()
     val receivedConfigs = mutableListOf<ProviderConfig>()
+    val receivedSystems = mutableListOf<String>()
 
     override suspend fun streamChat(
         config: ProviderConfig,
@@ -42,6 +46,7 @@ private class FakeProvider(
         onEvent: suspend (StreamEvent) -> Unit
     ) {
         receivedConfigs += config
+        receivedSystems += system
         receivedTools += tools
         receivedMessages += messages.toList()
         val events = script.removeFirstOrNull() ?: listOf(StreamEvent.Done(null))
@@ -71,6 +76,81 @@ class AgentEngineTest {
             it.messages += ChatMessage(role = "user", content = "hi")
         }
 
+    private fun visible(messages: List<ChatMessage>): List<ChatMessage> =
+        messages.filter { it.contextKind == null }
+
+    @Test fun `thinking only truncation is visible and partial tool calls are not executed`() = runBlocking {
+        val fake = FakeProvider(ArrayDeque(listOf(listOf(
+            StreamEvent.Thinking("unfinished reasoning"),
+            StreamEvent.ToolCall("write", "write_file", """{"path":"must-not-write.txt","content":"partial"}"""),
+            StreamEvent.Done("max_tokens")
+        ))))
+        val conv = newConversation()
+        AgentEngine(store, FakeFactory(fake)).run(conv, config)
+        val reply = conv.messages.first { it.role == "assistant" }
+        assertTrue(reply.isError)
+        assertTrue(reply.content.contains("截断"))
+        assertEquals("unfinished reasoning", reply.thinking)
+        assertFalse(store.workspaceFile("must-not-write.txt").exists())
+        assertTrue(conv.messages.last { it.role == "tool" }.isError)
+    }
+
+    @Test fun `live effort changes apply next request and usage is persisted`() = runBlocking {
+        val conv = newConversation()
+        val received = mutableListOf<com.example.myapplication.data.model.ReasoningEffort?>()
+        val provider = object : ApiProvider {
+            override suspend fun streamChat(config: ProviderConfig, system: String, messages: List<ChatMessage>,
+                tools: List<ToolSpec>, onEvent: suspend (StreamEvent) -> Unit) {
+                received += config.reasoningEffort
+                if (received.size == 1) {
+                    conv.reasoningEffortOverride = com.example.myapplication.data.model.ReasoningEffort.XHIGH
+                    onEvent(StreamEvent.ToolCall("list", "list_files", "{}"))
+                } else {
+                    onEvent(StreamEvent.Text("done"))
+                    onEvent(StreamEvent.Usage(com.example.myapplication.data.model.TokenUsage(123, 45)))
+                }
+                onEvent(StreamEvent.Done("stop"))
+            }
+        }
+        AgentEngine(store, FakeFactory(provider)).run(conv, config)
+        assertEquals(listOf(null, com.example.myapplication.data.model.ReasoningEffort.XHIGH), received)
+        assertEquals(123L, store.loadConversation(conv.id)!!.lastContextUsage!!.usage.inputTokens)
+    }
+
+    @Test fun `opaque provider blocks persist and reach the next tool round`() = runBlocking {
+        val blocks = listOf(com.example.myapplication.provider.ProviderJson.parseToJsonElement(
+            """{"type":"thinking","thinking":"summary","signature":"opaque-signature"}""") as kotlinx.serialization.json.JsonObject)
+        val provider = FakeProvider(ArrayDeque(listOf(
+            listOf(StreamEvent.Thinking("summary"), StreamEvent.ProviderBlocks("anthropic", blocks),
+                StreamEvent.ToolCall("read", "list_files", "{}"), StreamEvent.Done("tool_calls")),
+            listOf(StreamEvent.Text("done"), StreamEvent.Done("stop"))
+        )))
+        val conversation = newConversation()
+        AgentEngine(store, FakeFactory(provider)).run(conversation, config)
+        assertEquals(blocks, provider.receivedMessages[1].first { it.toolCalls.isNotEmpty() }.providerBlocks["anthropic"])
+        assertEquals(blocks, store.loadConversation(conversation.id)!!.messages.first { it.toolCalls.isNotEmpty() }.providerBlocks["anthropic"])
+    }
+
+    @Test
+    fun `large workspace image is delivered after every tool result`() = runBlocking {
+        store.workspaceFile("large.png").writeBytes(ByteArray(5 * 1024 * 1024))
+        store.writeWorkspace("notes.txt", "hello")
+        val fake = FakeProvider(ArrayDeque(listOf(
+            listOf(StreamEvent.ToolCall("image", "read_file", """{"path":"large.png"}"""),
+                StreamEvent.ToolCall("text", "read_file", """{"path":"notes.txt"}"""), StreamEvent.Done("tool_calls")),
+            listOf(StreamEvent.Text("seen"), StreamEvent.Done("stop"))
+        )))
+        val vision = config.copy(capabilityOverrides = mapOf(config.model to
+            com.example.myapplication.data.model.ModelCapabilities(image = true)))
+        AgentEngine(store, FakeFactory(fake)).run(newConversation(), vision)
+        val sent = visible(fake.receivedMessages.last())
+        assertEquals(listOf("user", "assistant", "tool", "tool", "user"), sent.map { it.role })
+        assertEquals("hello", sent[3].content)
+        assertEquals("image", sent.last().originToolCallId)
+        assertEquals(5L * 1024 * 1024, sent.last().attachments.single().sizeBytes)
+        assertEquals("native", sent.last().attachments.single().delivery)
+    }
+
     @Test
     fun `plain text reply ends loop`() = runBlocking {
         val fake = FakeProvider(ArrayDeque(listOf(
@@ -79,9 +159,107 @@ class AgentEngineTest {
         val engine = AgentEngine(store, FakeFactory(fake))
         val conv = newConversation()
         engine.run(conv, config)
-        assertEquals(2, conv.messages.size)
-        assertEquals("你好!", conv.messages.last().content)
-        assertTrue(conv.messages.last().toolCalls.isEmpty())
+        val visible = visible(conv.messages)
+        assertEquals(2, visible.size)
+        assertEquals("你好!", visible.last().content)
+        assertTrue(visible.last().toolCalls.isEmpty())
+    }
+
+    @Test
+    fun `permission changes append environment while system and tool schema stay stable`() = runBlocking {
+        val fake = FakeProvider(ArrayDeque<List<StreamEvent>>(listOf(
+            listOf(StreamEvent.ToolCall("plan", "enter_plan_mode", "{}"), StreamEvent.Done("tool_calls")),
+            listOf(StreamEvent.Text("planning"), StreamEvent.Done("stop"))
+        )))
+        val conversation = newConversation().also { it.permissionMode = PermissionMode.READONLY }
+
+        AgentEngine(store, FakeFactory(fake)).run(conversation, config)
+
+        val environments = conversation.messages.filter { it.contextKind == "environment" }
+        assertEquals(2, environments.size)
+        assertTrue(environments.first().content.contains("READONLY"))
+        assertTrue(environments.last().content.contains("PLAN"))
+        assertEquals(listOf(conversation.systemPromptSnapshot, conversation.systemPromptSnapshot), fake.receivedSystems)
+        assertEquals(fake.receivedTools[0], fake.receivedTools[1])
+        val firstRequest = fake.receivedMessages.first()
+        assertEquals(firstRequest, fake.receivedMessages.last().take(firstRequest.size))
+    }
+
+    @Test
+    fun `unchanged environment is reused across sends and scope update only appends`() = runBlocking {
+        val fake = FakeProvider(ArrayDeque<List<StreamEvent>>(List(3) {
+            listOf(StreamEvent.Text("ok"), StreamEvent.Done("stop"))
+        }))
+        val conversation = newConversation()
+        val engine = AgentEngine(store, FakeFactory(fake))
+        engine.run(conversation, config)
+        val prefix = conversation.messages.toList()
+        conversation.messages += ChatMessage(role = "user", content = "again")
+        engine.run(conversation, config)
+        assertEquals(1, conversation.messages.count { it.contextKind == "environment" })
+        assertEquals(prefix, fake.receivedMessages[1].take(prefix.size))
+        val secondPrefix = conversation.messages.toList()
+        conversation.allowedDirectories = listOf(store.workspaceDir.canonicalPath)
+        conversation.messages += ChatMessage(role = "user", content = "new scope")
+        engine.run(conversation, config)
+        assertEquals(2, conversation.messages.count { it.contextKind == "environment" })
+        assertEquals(secondPrefix, fake.receivedMessages[2].take(secondPrefix.size))
+        assertEquals(1, fake.receivedSystems.distinct().size)
+        assertEquals(1, fake.receivedTools.distinct().size)
+    }
+
+    @Test
+    fun `empty rejection removes all new media in a tool batch and keeps protocol results`() = runBlocking {
+        store.writeWorkspace("one.png", "one")
+        store.writeWorkspace("two.png", "two")
+        val fake = FakeProvider(ArrayDeque<List<StreamEvent>>(listOf(
+            listOf(StreamEvent.ToolCall("one", "read_file", """{"path":"one.png"}"""),
+                StreamEvent.ToolCall("two", "read_file", """{"path":"two.png"}"""), StreamEvent.Done("tool_calls")),
+            listOf(StreamEvent.Error("unsupported image")),
+            listOf(StreamEvent.Text("recovered"), StreamEvent.Done("stop"))
+        )))
+        val conversation = newConversation()
+        val engine = AgentEngine(store, FakeFactory(fake))
+        val vision = config.copy(capabilityOverrides = mapOf(config.model to
+            com.example.myapplication.data.model.ModelCapabilities(image = true)))
+        engine.run(conversation, vision)
+        val media = conversation.messages.filter { it.originToolCallId != null }
+        assertEquals(2, media.size)
+        assertTrue(media.all { it.excludedFromContext })
+        assertTrue(conversation.messages.filter { it.role == "tool" }.none { it.excludedFromContext })
+        conversation.messages += ChatMessage(role = "user", content = "continue as text")
+        engine.run(conversation, config)
+        assertTrue(fake.receivedMessages.last().none { it.attachments.isNotEmpty() })
+        assertEquals(2, fake.receivedMessages.last().count { it.role == "tool" })
+    }
+
+    @Test
+    fun `empty failed attachment request is excluded without losing an older accepted attachment`() = runBlocking {
+        val attachment = MessageAttachment(
+            name = "image.png", mimeType = "image/png", sizeBytes = 1,
+            workspacePath = "image.png", delivery = "native"
+        )
+        val conversation = Conversation(title = "attachments").also {
+            it.messages += ChatMessage(role = "user", content = "older", attachments = listOf(attachment))
+            it.messages += ChatMessage(role = "assistant", content = "accepted")
+            it.messages += ChatMessage(role = "user", content = "retry me", attachments = listOf(attachment))
+        }
+        val fake = FakeProvider(ArrayDeque<List<StreamEvent>>(listOf(
+            listOf(StreamEvent.Error("network")),
+            listOf(StreamEvent.Text("recovered"), StreamEvent.Done("stop"))
+        )))
+        val engine = AgentEngine(store, FakeFactory(fake))
+
+        engine.run(conversation, config)
+        assertFalse(conversation.messages[0].excludedFromContext)
+        assertTrue(conversation.messages[2].excludedFromContext)
+        assertTrue(conversation.messages.last { it.role == "assistant" }.excludedFromContext)
+
+        conversation.messages += ChatMessage(role = "user", content = "new request")
+        engine.run(conversation, config)
+        val replay = fake.receivedMessages.last()
+        assertTrue(replay.any { it.content == "older" && !it.excludedFromContext })
+        assertFalse(replay.any { it.content == "retry me" })
     }
 
     @Test
@@ -102,13 +280,14 @@ class AgentEngineTest {
         // 文件已写入工作区
         assertEquals("生成内容", store.readWorkspace("out.txt"))
         // 消息序列：user → assistant(toolCalls) → tool → assistant(final)
-        assertEquals(4, conv.messages.size)
-        assertEquals("user", conv.messages[0].role)
-        assertEquals("assistant", conv.messages[1].role)
-        assertEquals("write_file", conv.messages[1].toolCalls.single().name)
-        assertEquals("tool", conv.messages[2].role)
-        assertEquals("c1", conv.messages[2].toolCallId)
-        assertEquals("已生成 out.txt", conv.messages[3].content)
+        val visible = visible(conv.messages)
+        assertEquals(4, visible.size)
+        assertEquals("user", visible[0].role)
+        assertEquals("assistant", visible[1].role)
+        assertEquals("write_file", visible[1].toolCalls.single().name)
+        assertEquals("tool", visible[2].role)
+        assertEquals("c1", visible[2].toolCallId)
+        assertEquals("已生成 out.txt", visible[3].content)
         // 第二轮请求里 Provider 收到了 tool 结果
         assertEquals("tool", fake.receivedMessages[1].last().role)
     }
@@ -160,7 +339,7 @@ class AgentEngineTest {
 
         assertEquals("结论是…", conv.messages.last().content)
         // 第二次调用是子代理请求：任务作为 user 消息，工具集中不含 run_subagent，模型继承主代理
-        assertEquals("调研一下 Kotlin 协程", fake.receivedMessages[1].single().content)
+        assertEquals("调研一下 Kotlin 协程", visible(fake.receivedMessages[1]).single().content)
         assertEquals("m-main", fake.receivedConfigs[1].model)
         val subagentTools = fake.receivedTools[1].map { it.name }
         assertTrue("run_subagent" !in subagentTools)
