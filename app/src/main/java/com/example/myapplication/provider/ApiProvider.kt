@@ -9,6 +9,15 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 流式增量事件。工具调用在流结束时以完整形式发出（各 Provider 内部累积分片）。 */
 sealed interface StreamEvent {
@@ -47,17 +56,45 @@ val ProviderJson = Json {
     encodeDefaults = false
 }
 
+/** 取消监听持续到响应体关闭，覆盖等待响应头及阻塞的 SSE 读取。 */
+internal suspend fun <T> withCancellableResponse(
+    client: OkHttpClient,
+    request: Request,
+    block: suspend (Response) -> T
+): T = withContext(Dispatchers.IO) {
+    coroutineScope {
+        val call = client.newCall(request)
+        val cancellationWatcher = launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                awaitCancellation()
+            } finally {
+                call.cancel()
+            }
+        }
+        try {
+            currentCoroutineContext().ensureActive()
+            call.execute().use { response -> block(response) }
+        } catch (error: Exception) {
+            // OkHttp 以 IOException 报告连接取消，此处恢复协程的取消语义。
+            currentCoroutineContext().ensureActive()
+            throw error
+        } finally {
+            cancellationWatcher.cancel()
+        }
+    }
+}
+
 /** SSE POST 助手：逐行读取，把每个 `data:` 载荷交给 [onData]。 */
 object Sse {
     suspend fun post(client: OkHttpClient, request: Request, onData: suspend (String) -> Unit) {
-        val response = client.newCall(request).execute()
-        response.use { resp ->
+        withCancellableResponse(client, request) { resp ->
             if (!resp.isSuccessful) {
                 val body = runCatching { resp.body?.string() }.getOrNull().orEmpty()
                 throw ApiException(resp.code, body.take(2000))
             }
-            val source = resp.body?.source() ?: return
+            val source = resp.body?.source() ?: return@withCancellableResponse
             while (true) {
+                currentCoroutineContext().ensureActive()
                 val line = source.readUtf8Line() ?: break
                 if (line.startsWith("data:")) {
                     val data = line.removePrefix("data:").trim()

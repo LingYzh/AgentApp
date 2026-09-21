@@ -31,7 +31,9 @@ data class ProviderConfig(
     /** 附加请求头 */
     val extraHeaders: Map<String, String> = emptyMap(),
     /** 缓存的可用模型列表（通过 /models 接口拉取） */
-    val models: List<String> = emptyList()
+    val models: List<String> = emptyList(),
+    /** 可选的完整模型列表地址；留空按供应商和协议推导。 */
+    val modelsUrl: String = ""
 )
 
 /** 全局配置，持久化到 config.json */

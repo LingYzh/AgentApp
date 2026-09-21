@@ -1,14 +1,15 @@
 package com.example.myapplication.ui.memory
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -19,6 +20,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -26,6 +28,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -51,7 +55,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.myapplication.AgentApp
+import com.example.myapplication.data.backup.TransferKind
 import com.example.myapplication.data.model.MemoryEntry
+import com.example.myapplication.ui.components.ListSelectionBar
+import com.example.myapplication.ui.components.rememberListSelection
+import com.example.myapplication.ui.transfer.ConfigurationTransferHost
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -64,24 +73,73 @@ class MemoryViewModel(val app: AgentApp) : ViewModel() {
     private val _memories = MutableStateFlow<List<MemoryEntry>>(emptyList())
     val memories = _memories.asStateFlow()
 
+    private val _busy = MutableStateFlow(false)
+    val busy = _busy.asStateFlow()
+
+    private val _message = MutableStateFlow<String?>(null)
+    val message = _message.asStateFlow()
+
+    private suspend fun refreshData() {
+        _memories.value = app.store.listMemories().sortedByDescending { it.updatedAt }
+    }
+
     fun refresh() {
         viewModelScope.launch(Dispatchers.IO) {
-            _memories.value = app.store.listMemories().sortedByDescending { it.updatedAt }
+            refreshData()
         }
     }
 
     fun save(id: String?, title: String, content: String) {
         viewModelScope.launch(Dispatchers.IO) {
             app.store.saveMemory(title, content, id)
-            refresh()
+            refreshData()
         }
     }
 
     fun delete(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
             app.store.deleteMemory(id)
-            refresh()
+            refreshData()
         }
+    }
+
+    /** Deletes the selected memories in one IO task and refreshes the list once. */
+    fun deleteSelected(ids: Set<String>) {
+        val selectedIds = ids.toSet()
+        if (selectedIds.isEmpty() || _busy.value) return
+
+        _busy.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                var failure: Exception? = null
+                try {
+                    selectedIds.forEach { app.store.deleteMemory(it) }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    failure = error
+                }
+                try {
+                    // Refresh once even after a partial failure so the UI reflects removals.
+                    refreshData()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    failure = failure ?: error
+                }
+                failure?.let { error ->
+                    _message.value = "批量删除记忆失败：${error.message ?: error.javaClass.simpleName}"
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } finally {
+                _busy.value = false
+            }
+        }
+    }
+
+    fun clearMessage() {
+        _message.value = null
     }
 
     fun read(id: String): String = app.store.readMemory(id).orEmpty()
@@ -94,19 +152,39 @@ fun MemoryScreen(openDrawer: () -> Unit) {
     val vm: MemoryViewModel = viewModel(factory = viewModelFactory {
         initializer { MemoryViewModel(app) }
     })
-    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+    androidx.lifecycle.compose.LifecycleStartEffect(Unit) {
         vm.refresh()
-        onPauseOrDispose { }
+        onStopOrDispose { }
     }
     val memories by vm.memories.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val message by vm.message.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(message) {
+        message?.let {
+            snackbar.showSnackbar(it)
+            vm.clearMessage()
+        }
+    }
 
-    MemoryContent(
-        memories = memories,
-        memoryContentProvider = { id -> vm.read(id) },
-        onOpenDrawer = openDrawer,
-        onSaveMemory = { id, title, content -> vm.save(id, title, content) },
-        onDeleteMemory = { id -> vm.delete(id) }
-    )
+    ConfigurationTransferHost(
+        kind = TransferKind.MEMORIES,
+        transfer = app.configurationTransfer,
+        onImportSuccess = { vm.refresh() }
+    ) { actions ->
+        MemoryContent(
+            memories = memories,
+            memoryContentProvider = { id -> vm.read(id) },
+            onOpenDrawer = openDrawer,
+            onSaveMemory = { id, title, content -> vm.save(id, title, content) },
+            onDeleteMemory = { id -> vm.delete(id) },
+            onDeleteSelected = { ids -> vm.deleteSelected(ids) },
+            onImport = actions.onImport,
+            onExportSelected = actions.onExportSelected,
+            busy = actions.busy || busy,
+            snackbarHostState = snackbar
+        )
+    }
 }
 
 /**
@@ -119,11 +197,18 @@ fun MemoryContent(
     memoryContentProvider: (String) -> String,
     onOpenDrawer: () -> Unit,
     onSaveMemory: (id: String?, title: String, content: String) -> Unit,
-    onDeleteMemory: (String) -> Unit
+    onDeleteMemory: (String) -> Unit,
+    onDeleteSelected: (Set<String>) -> Unit = { ids -> ids.forEach(onDeleteMemory) },
+    onImport: () -> Unit = {},
+    onExportSelected: (Set<String>) -> Unit = {},
+    busy: Boolean = false,
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() }
 ) {
     var editTarget by remember { mutableStateOf<Pair<String?, Boolean>?>(null) } // (id?, open)
+    val selection = rememberListSelection(memories.map { it.id }, memories.associate { it.id to it.title })
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("记忆") },
@@ -134,12 +219,35 @@ fun MemoryContent(
                     containerColor = MaterialTheme.colorScheme.surface,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface
-                )
+                ),
+                actions = {
+                    TextButton(
+                        onClick = {
+                            if (selection.active) selection.onExit() else selection.onEnter()
+                        },
+                        enabled = !busy
+                    ) {
+                        Text(if (selection.active) "完成" else "管理")
+                    }
+                }
             )
         },
+        bottomBar = {
+            if (selection.active) {
+                ListSelectionBar(
+                    selection = selection,
+                    busy = busy,
+                    onDelete = onDeleteSelected,
+                    onImport = onImport,
+                    onExport = onExportSelected
+                )
+            }
+        },
         floatingActionButton = {
-            FloatingActionButton(onClick = { editTarget = null to true }) {
-                Icon(Icons.Filled.Add, "添加记忆")
+            if (!selection.active) {
+                FloatingActionButton(onClick = { editTarget = null to true }) {
+                    Icon(Icons.Filled.Add, "添加记忆")
+                }
             }
         }
     ) { padding ->
@@ -158,7 +266,7 @@ fun MemoryContent(
                     start = ExpressiveTokens.ScreenHorizontalPadding,
                     top = 8.dp,
                     end = ExpressiveTokens.ScreenHorizontalPadding,
-                    bottom = ExpressiveTokens.FabSafeBottomPadding
+                    bottom = if (selection.active) 16.dp else ExpressiveTokens.FabSafeBottomPadding
                 ),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -166,7 +274,15 @@ fun MemoryContent(
                     MemoryItem(
                         entry = entry,
                         content = memoryContentProvider(entry.id),
-                        onClick = { editTarget = entry.id to true },
+                        selectionMode = selection.active,
+                        selected = entry.id in selection.selectedIds,
+                        onClick = {
+                            if (!busy) {
+                                if (selection.active) selection.onToggle(entry.id)
+                                else editTarget = entry.id to true
+                            }
+                        },
+                        onToggle = { if (!busy) selection.onToggle(entry.id) },
                         onDelete = { onDeleteMemory(entry.id) }
                     )
                 }
@@ -210,7 +326,10 @@ fun MemoryItem(
     entry: MemoryEntry,
     content: String,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onToggle: () -> Unit = {}
 ) {
     Card(
         shape = ExpressiveTokens.CardShape,
@@ -218,12 +337,20 @@ fun MemoryItem(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         ),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (selectionMode) {
+                Checkbox(
+                    checked = selected,
+                    onCheckedChange = { onToggle() }
+                )
+                Spacer(Modifier.width(8.dp))
+            }
             Column(Modifier.weight(1f)) {
                 Text(
                     entry.title, style = MaterialTheme.typography.titleMedium,
@@ -242,8 +369,10 @@ fun MemoryItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Filled.Delete, "删除")
+            if (!selectionMode) {
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Filled.Delete, "删除")
+                }
             }
         }
     }

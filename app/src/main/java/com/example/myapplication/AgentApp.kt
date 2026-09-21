@@ -4,6 +4,7 @@ import android.app.Application
 import com.example.myapplication.agent.AgentEngine
 import com.example.myapplication.agent.SubagentRunner
 import com.example.myapplication.data.backup.BackupManager
+import com.example.myapplication.data.backup.ConfigurationTransfer
 import com.example.myapplication.data.store.FileStore
 import com.example.myapplication.provider.ModelFetcher
 import com.example.myapplication.provider.ProviderFactory
@@ -21,6 +22,8 @@ class AgentApp : Application() {
         private set
     lateinit var backupManager: BackupManager
         private set
+    lateinit var configurationTransfer: ConfigurationTransfer
+        private set
 
     /** 当前主题模式（system / light / dark），UI 即时响应 */
     private val _themeMode = MutableStateFlow("system")
@@ -33,6 +36,7 @@ class AgentApp : Application() {
         providerFactory = ProviderFactory()
         modelFetcher = ModelFetcher(providerFactory.client)
         backupManager = BackupManager(this, store)
+        configurationTransfer = ConfigurationTransfer(store)
         _themeMode.value = store.loadConfig().themeMode
     }
 

@@ -5,6 +5,7 @@ import com.example.myapplication.data.model.Conversation
 import com.example.myapplication.data.model.ProviderConfig
 import com.example.myapplication.data.store.FileStore
 import com.example.myapplication.provider.ProviderFactory
+import kotlinx.coroutines.CancellationException
 
 /**
  * 子代理执行器（Claude Code Task 风格）：主代理通过 run_subagent 工具提供完整任务描述，
@@ -59,8 +60,19 @@ class SubagentRunner(
                     "最终回复要包含完整结论（主 Agent 只能看到你的最终回复）。",
                 allowedTools = Tools.SUBAGENT_DEFAULT.toSet()
             )
-            conversation.messages.lastOrNull { it.role == "assistant" && !it.isError }?.content
-                ?: "(子代理未产生回复)"
+            val lastAssistant = conversation.messages.lastOrNull { it.role == "assistant" }
+            when {
+                lastAssistant == null -> "(子代理未产生回复)"
+                lastAssistant.isError -> {
+                    val detail = lastAssistant.content.ifBlank { "子代理未产生有效回复" }
+                    "错误: $detail"
+                }
+                lastAssistant.content.isBlank() -> "(子代理未产生回复)"
+                else -> lastAssistant.content
+            }
+        } catch (e: CancellationException) {
+            // 保留父协程的取消语义，不能把停止误报为普通子代理错误结果。
+            throw e
         } catch (e: Exception) {
             "错误: 子代理执行失败: ${e.message}"
         }

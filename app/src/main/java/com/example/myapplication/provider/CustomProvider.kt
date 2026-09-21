@@ -75,8 +75,7 @@ class CustomProvider(private val client: OkHttpClient) : ApiProvider {
         }
         config.extraHeaders.forEach { (k, v) -> requestBuilder.header(k, v) }
 
-        val response = client.newCall(requestBuilder.build()).execute()
-        response.use { resp ->
+        withCancellableResponse(client, requestBuilder.build()) { resp ->
             if (!resp.isSuccessful) {
                 val errBody = runCatching { resp.body?.string() }.getOrNull().orEmpty()
                 throw ApiException(resp.code, errBody.take(2000))

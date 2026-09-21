@@ -9,6 +9,9 @@ import com.example.myapplication.data.model.ToolCallInfo
 import com.example.myapplication.data.store.FileStore
 import com.example.myapplication.provider.ProviderFactory
 import com.example.myapplication.provider.StreamEvent
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 /**
  * Agent 主循环：发送消息 → 流式解析 → 执行工具调用 → 回填结果 → 继续，
@@ -57,87 +60,273 @@ class AgentEngine(
             ?: buildSystemPrompt(tools.map { it.name }.toSet(), agentProfile, store.loadConfig())
 
         var loop = 0
-        while (true) {
-            var assistant = ChatMessage(role = "assistant")
-            conversation.messages += assistant
-            callbacks.onMessageAdded(assistant)
+        var cancellationRecorded = false
+        try {
+            while (true) {
+                // 每次请求前检查，避免取消后创建一个没有请求意义的 assistant 占位。
+                currentCoroutineContext().ensureActive()
 
-            val text = StringBuilder()
-            val thinking = StringBuilder()
-            val calls = mutableListOf<ToolCallInfo>()
-            var error: String? = null
+                var assistant = ChatMessage(role = "assistant")
+                conversation.messages += assistant
+                callbacks.onMessageAdded(assistant)
 
-            try {
-                // 历史消息不含刚追加的空 assistant 占位
-                val history = conversation.messages.dropLast(1).toList()
-                provider.streamChat(config, system, history, tools) { ev ->
-                    when (ev) {
-                        is StreamEvent.Text -> {
-                            text.append(ev.delta)
-                            callbacks.onMessageUpdated(
-                                assistant.copy(content = text.toString(), thinking = thinking.toString())
+                val text = StringBuilder()
+                val thinking = StringBuilder()
+                val calls = mutableListOf<ToolCallInfo>()
+                var error: String? = null
+                var stopReason: String? = null
+                var streamCancellation: CancellationException? = null
+
+                try {
+                    // 历史消息不含刚追加的空 assistant 占位
+                    currentCoroutineContext().ensureActive()
+                    val history = conversation.messages.dropLast(1).toList()
+                    provider.streamChat(config, system, history, tools) { ev ->
+                        // 某些 Provider 可能在底层已读入数据后才回调，不能在取消后继续写入会话。
+                        currentCoroutineContext().ensureActive()
+                        when (ev) {
+                            is StreamEvent.Text -> {
+                                text.append(ev.delta)
+                                assistant = assistant.copy(
+                                    content = text.toString(),
+                                    thinking = thinking.toString(),
+                                    toolCalls = calls.toList()
+                                )
+                                updateAssistant(conversation, assistant, callbacks)
+                            }
+                            is StreamEvent.Thinking -> {
+                                thinking.append(ev.delta)
+                                assistant = assistant.copy(
+                                    content = text.toString(),
+                                    thinking = thinking.toString(),
+                                    toolCalls = calls.toList()
+                                )
+                                updateAssistant(conversation, assistant, callbacks)
+                            }
+                            is StreamEvent.ToolCall -> {
+                                calls += ToolCallInfo(ev.id, ev.name, ev.argumentsJson)
+                                // 工具调用可能在文本后到达，实时写入以便取消时保留完整请求。
+                                assistant = assistant.copy(toolCalls = calls.toList())
+                                updateAssistant(conversation, assistant, callbacks)
+                            }
+                            is StreamEvent.Done -> stopReason = ev.stopReason
+                            is StreamEvent.Error -> {
+                                error = ev.message.ifBlank { "模型流返回错误" }
+                            }
+                        }
+                    }
+                    // Provider 正常返回但 Job 已被取消时，也要走可见的中断收尾。
+                    currentCoroutineContext().ensureActive()
+                } catch (e: CancellationException) {
+                    streamCancellation = e
+                } catch (e: Exception) {
+                    error = e.message ?: e.javaClass.simpleName
+                }
+
+                val cancellation = streamCancellation
+                if (cancellation != null) {
+                    cancellationRecorded = true
+                    assistant = assistant.copy(
+                        content = stoppedContent(text.toString()),
+                        thinking = thinking.toString(),
+                        toolCalls = calls.toList(),
+                        isError = true
+                    )
+                    updateAssistant(conversation, assistant, callbacks)
+                    store.saveConversation(conversation)
+                    // 流阶段尚未开始执行工具，使用保守提示，避免声称动作已完成或未发生。
+                    calls.forEach { call ->
+                        appendToolResponse(
+                            conversation,
+                            call,
+                            "未执行：任务已中断",
+                            callbacks,
+                            isError = true
+                        )
+                    }
+                    throw cancellation
+                }
+
+                // 空流、显式 Error 以及 stop_reason=error 都必须在消息中可见。
+                if (error == null && stopReason.equals("error", ignoreCase = true)) {
+                    error = "模型流返回错误"
+                }
+                if (error == null && text.isEmpty() && thinking.isEmpty() && calls.isEmpty()) {
+                    error = "模型未返回内容"
+                }
+
+                val err = error
+                assistant = assistant.copy(
+                    content = visibleContent(text.toString(), err),
+                    thinking = thinking.toString(),
+                    toolCalls = calls.toList(),
+                    isError = err != null
+                )
+                updateAssistant(conversation, assistant, callbacks)
+                // 定稿 assistant 后立即持久化，随后每条 tool response 也单独持久化。
+                store.saveConversation(conversation)
+
+                if (calls.isEmpty()) return
+
+                loop++
+                if (err != null) {
+                    calls.forEach { call ->
+                        appendToolResponse(
+                            conversation,
+                            call,
+                            "未执行：模型流发生错误：$err",
+                            callbacks,
+                            isError = true
+                        )
+                    }
+                    return
+                }
+
+                if (loop > maxLoops) {
+                    calls.forEach { call ->
+                        appendToolResponse(
+                            conversation,
+                            call,
+                            "未执行：已达到最大工具循环次数（$maxLoops）",
+                            callbacks,
+                            isError = true
+                        )
+                    }
+                    val note = ChatMessage(
+                        role = "assistant",
+                        content = "⚠️ 已达到最大工具循环次数（$maxLoops），为避免失控已停止。",
+                        isError = true
+                    )
+                    conversation.messages += note
+                    callbacks.onMessageAdded(note)
+                    store.saveConversation(conversation)
+                    return
+                }
+
+                var toolCancellation: CancellationException? = null
+                var currentToolStarted = false
+                for ((index, call) in calls.withIndex()) {
+                    currentToolStarted = false
+                    try {
+                        // 放在每个调用自己的 try 中，取消发生在这里也要为当前及后续调用补齐响应。
+                        currentCoroutineContext().ensureActive()
+                        callbacks.onToolStatus("执行工具：${call.name}")
+                        currentCoroutineContext().ensureActive()
+                        // 标记在真正进入 executor 前，取消发生在此之后就不能声称工具未启动。
+                        currentToolStarted = true
+                        val result = executor.execute(call.name, call.argumentsJson)
+                        appendToolResponse(
+                            conversation,
+                            call,
+                            result,
+                            callbacks,
+                            isError = result.startsWith("错误")
+                        )
+                    } catch (e: CancellationException) {
+                        toolCancellation = e
+                        cancellationRecorded = true
+                        // 当前工具可能已经开始，必须提示调用方确认真实外部副作用。
+                        appendToolResponse(
+                            conversation,
+                            call,
+                            if (currentToolStarted) "执行已中断，结果需确认" else "未执行：任务已中断",
+                            callbacks,
+                            isError = true
+                        )
+                        // 尚未开始的后续调用可以明确标记为未执行。
+                        calls.drop(index + 1).forEach { pending ->
+                            appendToolResponse(
+                                conversation,
+                                pending,
+                                "未执行：任务已中断",
+                                callbacks,
+                                isError = true
                             )
                         }
-                        is StreamEvent.Thinking -> {
-                            thinking.append(ev.delta)
-                            callbacks.onMessageUpdated(
-                                assistant.copy(content = text.toString(), thinking = thinking.toString())
-                            )
-                        }
-                        is StreamEvent.ToolCall ->
-                            calls += ToolCallInfo(ev.id, ev.name, ev.argumentsJson)
-                        is StreamEvent.Done -> Unit
-                        is StreamEvent.Error -> error = ev.message
+                        break
                     }
                 }
-            } catch (e: Exception) {
-                error = e.message ?: e.javaClass.simpleName
+
+                val interrupted = toolCancellation
+                if (interrupted != null) {
+                    markAssistantStopped(conversation, assistant, callbacks)
+                    throw interrupted
+                }
+                // 工具批次完成后立刻回到空闲状态，下一轮模型请求期间不显示过期工具状态。
+                callbacks.onToolStatus(null)
             }
-
-            // 定稿 assistant 消息
-            val err = error
-            assistant = assistant.copy(
-                content = if (text.isEmpty() && err != null && calls.isEmpty()) "⚠️ $err" else text.toString(),
-                thinking = thinking.toString(),
-                toolCalls = calls,
-                isError = err != null && calls.isEmpty()
-            )
-            replaceMessage(conversation, assistant)
-            callbacks.onMessageUpdated(assistant)
-
-            if (calls.isEmpty()) {
-                store.saveConversation(conversation)
-                return
-            }
-
-            loop++
-            if (loop > maxLoops) {
+        } catch (e: CancellationException) {
+            if (!cancellationRecorded) {
+                // 取消发生在下一轮请求前或其它尚无当前流的边界，单独留下可见停止消息。
                 val note = ChatMessage(
                     role = "assistant",
-                    content = "⚠️ 已达到最大工具循环次数（$maxLoops），为避免失控已停止。",
+                    content = "⚠️ 已停止：本次执行已取消。",
                     isError = true
                 )
                 conversation.messages += note
                 callbacks.onMessageAdded(note)
                 store.saveConversation(conversation)
-                return
             }
-
-            for (call in calls) {
-                callbacks.onToolStatus("执行工具：${call.name}")
-                val result = executor.execute(call.name, call.argumentsJson)
-                val toolMsg = ChatMessage(
-                    role = "tool",
-                    toolCallId = call.id,
-                    toolName = call.name,
-                    content = result,
-                    isError = result.startsWith("错误")
-                )
-                conversation.messages += toolMsg
-                callbacks.onMessageAdded(toolMsg)
-            }
+            throw e
+        } finally {
             callbacks.onToolStatus(null)
+            // 终止路径再次保存，确保取消或回调异常时已写入的部分不会丢失。
+            store.saveConversation(conversation)
         }
+    }
+
+    private fun updateAssistant(
+        conversation: Conversation,
+        message: ChatMessage,
+        callbacks: Callbacks
+    ) {
+        replaceMessage(conversation, message)
+        callbacks.onMessageUpdated(message)
+    }
+
+    private fun appendToolResponse(
+        conversation: Conversation,
+        call: ToolCallInfo,
+        content: String,
+        callbacks: Callbacks,
+        isError: Boolean
+    ) {
+        val toolMsg = ChatMessage(
+            role = "tool",
+            toolCallId = call.id,
+            toolName = call.name,
+            content = content,
+            isError = isError
+        )
+        conversation.messages += toolMsg
+        callbacks.onMessageAdded(toolMsg)
+        store.saveConversation(conversation)
+    }
+
+    private fun markAssistantStopped(
+        conversation: Conversation,
+        assistant: ChatMessage,
+        callbacks: Callbacks
+    ) {
+        val stopped = assistant.copy(
+            content = stoppedContent(assistant.content),
+            isError = true
+        )
+        updateAssistant(conversation, stopped, callbacks)
+        store.saveConversation(conversation)
+    }
+
+    private fun visibleContent(text: String, error: String?): String {
+        if (error != null) {
+            val marker = "⚠️ $error"
+            return if (text.isBlank()) marker else "$text\n\n$marker"
+        }
+        return text
+    }
+
+    private fun stoppedContent(partial: String): String {
+        val marker = "⚠️ 已停止：本次执行已取消。"
+        return if (partial.isBlank()) marker else "$partial\n\n$marker"
     }
 
     private fun replaceMessage(conversation: Conversation, message: ChatMessage) {

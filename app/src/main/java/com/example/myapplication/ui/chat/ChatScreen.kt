@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Bolt
@@ -104,6 +105,10 @@ import com.example.myapplication.data.model.ModelResolver
 import com.example.myapplication.data.model.ProviderConfig
 import com.example.myapplication.provider.ProviderJson
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -117,6 +122,10 @@ class ChatViewModel(
 
     private var conversation: Conversation? = null
     private var agents: List<AgentProfile> = emptyList()
+    private var generationJob: Job? = null
+    private var modelSaveJob: Job? = null
+    private val _modelOptions = MutableStateFlow<List<Pair<ProviderConfig, String>>>(emptyList())
+    val modelOptions = _modelOptions.asStateFlow()
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages = _messages.asStateFlow()
@@ -140,39 +149,42 @@ class ChatViewModel(
     val error = _error.asStateFlow()
 
     init {
-        viewModelScope.launch(Dispatchers.IO) {
-            agents = app.store.loadAgents()
-            val conv = app.store.loadConversation(conversationId)
+        viewModelScope.launch {
+            val (loadedAgents, conv, config) = withContext(Dispatchers.IO) {
+                Triple(app.store.loadAgents(), app.store.loadConversation(conversationId), app.store.loadConfig())
+            }
+            agents = loadedAgents
+            _modelOptions.value = config.providers.flatMap { p ->
+                p.models.ifEmpty { listOf(p.model) }.filter { it.isNotBlank() }.map { p to it }
+            }
             if (conv != null) {
                 conversation = conv
                 _messages.value = conv.messages.toList()
                 _title.value = conv.title
                 _agentProfile.value = conv.agentId?.let { id -> agents.firstOrNull { it.id == id } }
-                refreshModelLabel()
+                _currentModel.value = ModelResolver.resolve(conv, config, agents)?.model.orEmpty()
             } else {
                 _error.value = "对话不存在"
             }
         }
     }
 
-    private fun refreshModelLabel() {
-        val conv = conversation ?: return
-        val resolved = ModelResolver.resolve(conv, app.store.loadConfig(), agents)
-        _currentModel.value = resolved?.model ?: ""
-    }
-
-    /** 模型可选项：(provider, model) 对 */
-    fun modelOptions(): List<Pair<ProviderConfig, String>> =
-        app.store.loadConfig().providers.flatMap { p ->
-            (p.models.ifEmpty { listOf(p.model) }).filter { it.isNotBlank() }.map { p to it }
-        }
-
     fun switchModel(providerId: String, model: String) {
+        if (_streaming.value) return
         val conv = conversation ?: return
         conv.providerIdOverride = providerId
         conv.modelOverride = model
-        viewModelScope.launch(Dispatchers.IO) {
-            app.store.saveConversation(conv)
+        val snapshot = conv.copy(messages = conv.messages.toMutableList())
+        val previousSave = modelSaveJob
+        modelSaveJob = viewModelScope.launch {
+            previousSave?.join()
+            try {
+                withContext(Dispatchers.IO) { app.store.saveConversation(snapshot) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _error.value = error.message ?: "模型选择保存失败"
+            }
         }
         _currentModel.value = model
     }
@@ -183,48 +195,62 @@ class ChatViewModel(
             _error.value = "对话尚未加载完成"
             return
         }
-        val appConfig = app.store.loadConfig()
-        val resolved = ModelResolver.resolve(conv, appConfig, agents)
-        if (resolved == null) {
-            _error.value = "请先在「模型配置」中添加并选择一个模型"
-            return
-        }
-        val userMsg = ChatMessage(role = "user", content = text.trim())
-        conv.messages += userMsg
-        if (conv.title == "新对话") {
-            conv.title = text.trim().take(24)
-            _title.value = conv.title
-        }
-        app.store.saveConversation(conv)
-        _messages.value = conv.messages.toList()
         _streaming.value = true
-
-        viewModelScope.launch(Dispatchers.IO) {
+        _error.value = null
+        generationJob = viewModelScope.launch {
             try {
+                modelSaveJob?.join()
+                val appConfig = withContext(Dispatchers.IO) { app.store.loadConfig() }
+                val resolved = ModelResolver.resolve(conv, appConfig, agents)
+                if (resolved == null) {
+                    _error.value = "请先在「模型配置」中添加并选择一个模型"
+                    return@launch
+                }
+                conv.messages += ChatMessage(role = "user", content = text.trim())
+                if (conv.title == "新对话") {
+                    conv.title = text.trim().take(24)
+                    _title.value = conv.title
+                }
+                _messages.value = conv.messages.toList()
                 val engine = app.newAgentEngine(onSubagentStatus = { _toolStatus.value = it })
-                engine.run(
-                    conversation = conv,
-                    config = resolved,
-                    maxLoops = appConfig.maxAgentLoops,
-                    agentProfile = _agentProfile.value,
-                    callbacks = AgentEngine.Callbacks(
-                        onMessageAdded = { _messages.value = _messages.value + it },
-                        onMessageUpdated = { updated ->
-                            _messages.value = _messages.value.map {
-                                if (it.id == updated.id) updated else it
-                            }
-                        },
-                        onToolStatus = { _toolStatus.value = it }
+                withContext(Dispatchers.IO) {
+                    app.store.saveConversation(conv)
+                    engine.run(
+                        conversation = conv,
+                        config = resolved,
+                        maxLoops = appConfig.maxAgentLoops,
+                        agentProfile = _agentProfile.value,
+                        callbacks = AgentEngine.Callbacks(
+                            onMessageAdded = { _messages.value = _messages.value + it },
+                            onMessageUpdated = { updated ->
+                                _messages.value = _messages.value.map {
+                                    if (it.id == updated.id) updated else it
+                                }
+                            },
+                            onToolStatus = { _toolStatus.value = it }
+                        )
                     )
-                )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 _error.value = e.message ?: "发送失败"
             } finally {
+                // 退出页面或主动停止时也先完成保存，再允许下一次发送。
+                try {
+                    withContext(NonCancellable + Dispatchers.IO) { app.store.saveConversation(conv) }
+                } catch (error: Exception) {
+                    _error.value = error.message ?: "会话保存失败"
+                }
                 _streaming.value = false
                 _toolStatus.value = null
                 _messages.value = conv.messages.toList()
             }
         }
+    }
+
+    fun stop() {
+        generationJob?.cancel()
     }
 
     fun clearError() {
@@ -247,6 +273,7 @@ fun ChatScreen(navController: NavHostController, conversationId: String) {
     val streaming by vm.streaming.collectAsStateWithLifecycle()
     val toolStatus by vm.toolStatus.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
+    val modelOptions by vm.modelOptions.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(error) {
@@ -263,10 +290,11 @@ fun ChatScreen(navController: NavHostController, conversationId: String) {
         currentModel = currentModel,
         streaming = streaming,
         toolStatus = toolStatus,
-        modelOptions = vm.modelOptions(),
+        modelOptions = modelOptions,
         onBack = { navController.safePopBackStack() },
         onSwitchModel = { providerId, model -> vm.switchModel(providerId, model) },
         onSendMessage = { vm.send(it) },
+        onStop = { vm.stop() },
         onViewFile = { path -> navController.safeNavigateDirect(Routes.fileView(path)) },
         snackbarHostState = snackbar
     )
@@ -289,7 +317,8 @@ fun ChatContent(
     onSwitchModel: (providerId: String, model: String) -> Unit,
     onSendMessage: (String) -> Unit,
     onViewFile: (String) -> Unit,
-    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() }
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
+    onStop: () -> Unit = {}
 ) {
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
@@ -431,16 +460,20 @@ fun ChatContent(
                         )
                         IconButton(
                             onClick = {
-                                onSendMessage(input)
-                                input = ""
+                                if (streaming) {
+                                    onStop()
+                                } else {
+                                    onSendMessage(input)
+                                    input = ""
+                                }
                             },
-                            enabled = input.isNotBlank() && !streaming,
+                            enabled = streaming || input.isNotBlank(),
                             modifier = Modifier.padding(bottom = 4.dp)
                         ) {
                             Icon(
-                                Icons.AutoMirrored.Filled.Send,
-                                contentDescription = "发送",
-                                tint = if (input.isNotBlank() && !streaming) {
+                                if (streaming) Icons.Filled.Stop else Icons.AutoMirrored.Filled.Send,
+                                contentDescription = if (streaming) "停止生成" else "发送",
+                                tint = if (streaming || input.isNotBlank()) {
                                     MaterialTheme.colorScheme.primary
                                 } else {
                                     MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)

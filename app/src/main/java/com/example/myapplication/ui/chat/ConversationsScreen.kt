@@ -1,6 +1,5 @@
 package com.example.myapplication.ui.chat
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +23,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -31,11 +31,14 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,7 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -56,13 +59,18 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
 import com.example.myapplication.AgentApp
 import com.example.myapplication.Routes
+import com.example.myapplication.data.backup.TransferKind
 import com.example.myapplication.safeNavigateDirect
 import com.example.myapplication.ui.theme.ExpressiveTokens
 import com.example.myapplication.ui.agents.AgentAvatar
 import com.example.myapplication.data.model.AgentProfile
 import com.example.myapplication.data.model.ChatMessage
 import com.example.myapplication.data.model.Conversation
+import com.example.myapplication.ui.components.ListSelectionBar
+import com.example.myapplication.ui.components.rememberListSelection
 import com.example.myapplication.ui.theme.AgentTheme
+import com.example.myapplication.ui.transfer.ConfigurationTransferHost
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -79,10 +87,20 @@ class ConversationsViewModel(private val app: AgentApp) : ViewModel() {
     private val _agents = MutableStateFlow<List<AgentProfile>>(emptyList())
     val agents = _agents.asStateFlow()
 
+    private val _busy = MutableStateFlow(false)
+    val busy = _busy.asStateFlow()
+
+    private val _message = MutableStateFlow<String?>(null)
+    val message = _message.asStateFlow()
+
+    private suspend fun refreshData() {
+        _conversations.value = app.store.listConversations()
+        _agents.value = app.store.loadAgents()
+    }
+
     fun refresh() {
         viewModelScope.launch(Dispatchers.IO) {
-            _conversations.value = app.store.listConversations()
-            _agents.value = app.store.loadAgents()
+            refreshData()
         }
     }
 
@@ -90,7 +108,7 @@ class ConversationsViewModel(private val app: AgentApp) : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             val c = Conversation(agentId = agentId)
             app.store.saveConversation(c)
-            refresh()
+            refreshData()
             withContext(Dispatchers.Main) { onCreated(c) }
         }
     }
@@ -98,7 +116,7 @@ class ConversationsViewModel(private val app: AgentApp) : ViewModel() {
     fun delete(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
             app.store.deleteConversation(id)
-            refresh()
+            refreshData()
         }
     }
 
@@ -108,8 +126,47 @@ class ConversationsViewModel(private val app: AgentApp) : ViewModel() {
                 it.title = title.ifBlank { it.title }
                 app.store.saveConversation(it)
             }
-            refresh()
+            refreshData()
         }
+    }
+
+    /** Deletes the selected conversations in one IO task and refreshes the list once. */
+    fun deleteSelected(ids: Set<String>) {
+        val selectedIds = ids.toSet()
+        if (selectedIds.isEmpty() || _busy.value) return
+
+        _busy.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                var failure: Exception? = null
+                try {
+                    selectedIds.forEach { app.store.deleteConversation(it) }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    failure = error
+                }
+                try {
+                    // Refresh once even after a partial failure so the UI reflects removals.
+                    refreshData()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    failure = failure ?: error
+                }
+                failure?.let { error ->
+                    _message.value = "批量删除对话失败：${error.message ?: error.javaClass.simpleName}"
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } finally {
+                _busy.value = false
+            }
+        }
+    }
+
+    fun clearMessage() {
+        _message.value = null
     }
 
     fun agentLabel(agentId: String?): String? =
@@ -123,25 +180,45 @@ fun ConversationsScreen(navController: NavHostController, openDrawer: () -> Unit
     val vm: ConversationsViewModel = viewModel(factory = viewModelFactory {
         initializer { ConversationsViewModel(app) }
     })
-    LifecycleResumeEffect(Unit) {
+    LifecycleStartEffect(Unit) {
         vm.refresh()
-        onPauseOrDispose { }
+        onStopOrDispose { }
     }
     val list by vm.conversations.collectAsStateWithLifecycle()
     val agents by vm.agents.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val message by vm.message.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(message) {
+        message?.let {
+            snackbar.showSnackbar(it)
+            vm.clearMessage()
+        }
+    }
 
-    ConversationsContent(
-        conversations = list,
-        agents = agents,
-        agentLabel = { vm.agentLabel(it) },
-        onOpenDrawer = openDrawer,
-        onSelectConversation = { navController.safeNavigateDirect(Routes.chat(it)) },
-        onCreateConversation = { agentId ->
-            vm.create(agentId) { navController.safeNavigateDirect(Routes.chat(it.id)) }
-        },
-        onRenameConversation = { id, title -> vm.rename(id, title) },
-        onDeleteConversation = { vm.delete(it) }
-    )
+    ConfigurationTransferHost(
+        kind = TransferKind.CONVERSATIONS,
+        transfer = app.configurationTransfer,
+        onImportSuccess = { vm.refresh() }
+    ) { actions ->
+        ConversationsContent(
+            conversations = list,
+            agents = agents,
+            agentLabel = { vm.agentLabel(it) },
+            onOpenDrawer = openDrawer,
+            onSelectConversation = { navController.safeNavigateDirect(Routes.chat(it)) },
+            onCreateConversation = { agentId ->
+                vm.create(agentId) { navController.safeNavigateDirect(Routes.chat(it.id)) }
+            },
+            onRenameConversation = { id, title -> vm.rename(id, title) },
+            onDeleteConversation = { vm.delete(it) },
+            onDeleteSelected = { vm.deleteSelected(it) },
+            onImport = actions.onImport,
+            onExportSelected = actions.onExportSelected,
+            busy = actions.busy || busy,
+            snackbarHostState = snackbar
+        )
+    }
 }
 
 /**
@@ -157,12 +234,19 @@ fun ConversationsContent(
     onSelectConversation: (String) -> Unit,
     onCreateConversation: (String?) -> Unit,
     onRenameConversation: (id: String, title: String) -> Unit,
-    onDeleteConversation: (String) -> Unit
+    onDeleteConversation: (String) -> Unit,
+    onDeleteSelected: (Set<String>) -> Unit = { ids -> ids.forEach(onDeleteConversation) },
+    onImport: () -> Unit = {},
+    onExportSelected: (Set<String>) -> Unit = {},
+    busy: Boolean = false,
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() }
 ) {
     var renameTarget by remember { mutableStateOf<Conversation?>(null) }
     var showAgentPicker by remember { mutableStateOf(false) }
+    val selection = rememberListSelection(conversations.map { it.id }, conversations.associate { it.id to it.title })
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("对话") },
@@ -173,12 +257,35 @@ fun ConversationsContent(
                     containerColor = MaterialTheme.colorScheme.surface,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface
-                )
+                ),
+                actions = {
+                    TextButton(
+                        onClick = {
+                            if (selection.active) selection.onExit() else selection.onEnter()
+                        },
+                        enabled = !busy
+                    ) {
+                        Text(if (selection.active) "完成" else "管理")
+                    }
+                }
             )
         },
+        bottomBar = {
+            if (selection.active) {
+                ListSelectionBar(
+                    selection = selection,
+                    busy = busy,
+                    onDelete = onDeleteSelected,
+                    onImport = onImport,
+                    onExport = onExportSelected
+                )
+            }
+        },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showAgentPicker = true }) {
-                Icon(Icons.Filled.Add, "新对话")
+            if (!selection.active) {
+                FloatingActionButton(onClick = { showAgentPicker = true }) {
+                    Icon(Icons.Filled.Add, "新对话")
+                }
             }
         }
     ) { padding ->
@@ -214,7 +321,7 @@ fun ConversationsContent(
                     start = ExpressiveTokens.ScreenHorizontalPadding,
                     top = 8.dp,
                     end = ExpressiveTokens.ScreenHorizontalPadding,
-                    bottom = ExpressiveTokens.FabSafeBottomPadding
+                    bottom = if (selection.active) 16.dp else ExpressiveTokens.FabSafeBottomPadding
                 ),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -226,7 +333,15 @@ fun ConversationsContent(
                         conv = conv,
                         agent = boundAgent,
                         agentLabel = agentLabel(conv.agentId),
-                        onClick = { onSelectConversation(conv.id) },
+                        selectionMode = selection.active,
+                        selected = conv.id in selection.selectedIds,
+                        onClick = {
+                            if (!busy) {
+                                if (selection.active) selection.onToggle(conv.id)
+                                else onSelectConversation(conv.id)
+                            }
+                        },
+                        onToggle = { if (!busy) selection.onToggle(conv.id) },
                         onRename = { renameTarget = conv },
                         onDelete = { onDeleteConversation(conv.id) }
                     )
@@ -303,7 +418,8 @@ private fun AgentPickRow(
         shape = ExpressiveTokens.CardShape,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             Modifier.fillMaxWidth().padding(12.dp),
@@ -337,18 +453,29 @@ private fun ConversationItem(
     agentLabel: String?,
     onClick: () -> Unit,
     onRename: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onToggle: () -> Unit = {}
 ) {
     Card(
         shape = ExpressiveTokens.CardShape,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (selectionMode) {
+                Checkbox(
+                    checked = selected,
+                    onCheckedChange = { onToggle() }
+                )
+                Spacer(Modifier.width(8.dp))
+            }
             AgentAvatar(
                 emoji = agent?.emoji ?: "🤖",
                 avatarPath = agent?.avatarPath,
@@ -388,8 +515,10 @@ private fun ConversationItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            IconButton(onClick = onRename) { Icon(Icons.Filled.Edit, "重命名") }
-            IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, "删除") }
+            if (!selectionMode) {
+                IconButton(onClick = onRename) { Icon(Icons.Filled.Edit, "重命名") }
+                IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, "删除") }
+            }
         }
     }
 }

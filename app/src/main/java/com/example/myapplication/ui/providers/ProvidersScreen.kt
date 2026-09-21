@@ -1,6 +1,5 @@
 package com.example.myapplication.ui.providers
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,12 +37,18 @@ import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import com.example.myapplication.ui.components.rememberListSelection
+import com.example.myapplication.ui.components.ListSelectionBar
+import kotlinx.coroutines.CancellationException
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,7 +61,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -65,9 +70,11 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
 import com.example.myapplication.AgentApp
 import com.example.myapplication.Routes
+import com.example.myapplication.data.backup.TransferKind
 import com.example.myapplication.safeNavigateDirect
 import com.example.myapplication.safePopBackStack
 import com.example.myapplication.ui.theme.ExpressiveTokens
+import com.example.myapplication.ui.transfer.ConfigurationTransferHost
 import com.example.myapplication.data.model.AppConfig
 import com.example.myapplication.data.model.ChatMessage
 import com.example.myapplication.data.model.ProviderConfig
@@ -81,6 +88,35 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 class ProvidersViewModel(val app: AgentApp) : ViewModel() {
+    private val _deleting = MutableStateFlow(false)
+    val deleting = _deleting.asStateFlow()
+    private val _deleteError = MutableStateFlow<String?>(null)
+    val deleteError = _deleteError.asStateFlow()
+    fun clearDeleteError() { _deleteError.value = null }
+
+    fun deleteSelected(ids: Set<String>) {
+        if (_deleting.value || ids.isEmpty()) return
+        _deleting.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val current = app.store.loadConfig()
+                val remaining = current.providers.filterNot { it.id in ids }
+                app.store.saveConfig(current.copy(
+                    providers = remaining,
+                    selectedProviderId = current.selectedProviderId?.takeUnless { it in ids }
+                        ?: remaining.firstOrNull()?.id
+                ))
+                _config.value = app.store.loadConfig()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _deleteError.value = error.message ?: "删除失败"
+            } finally {
+                _deleting.value = false
+            }
+        }
+    }
+
     private val _config = MutableStateFlow(app.store.loadConfig())
     val config = _config.asStateFlow()
 
@@ -174,10 +210,13 @@ class ProvidersViewModel(val app: AgentApp) : ViewModel() {
                 val models = app.modelFetcher.fetchModels(provider)
                 _fetchedModels.value = models
                 if (models.isEmpty()) _fetchError.value = "接口返回为空"
+            } catch (error: CancellationException) {
+                throw error
             } catch (e: Exception) {
                 _fetchError.value = e.message ?: "拉取失败"
+            } finally {
+                _fetchingModels.value = false
             }
-            _fetchingModels.value = false
         }
     }
 }
@@ -189,20 +228,38 @@ fun ProvidersScreen(navController: NavHostController, openDrawer: () -> Unit) {
     val vm: ProvidersViewModel = viewModel(factory = viewModelFactory {
         initializer { ProvidersViewModel(app) }
     })
-    LifecycleResumeEffect(Unit) {
+    LifecycleStartEffect(Unit) {
         vm.refresh()
-        onPauseOrDispose { }
+        onStopOrDispose { }
     }
     val config by vm.config.collectAsStateWithLifecycle()
+    val deleting by vm.deleting.collectAsStateWithLifecycle()
+    val deleteError by vm.deleteError.collectAsStateWithLifecycle()
+    deleteError?.let { message ->
+        AlertDialog(onDismissRequest = vm::clearDeleteError,
+            title = { Text("删除失败") }, text = { Text(message) },
+            confirmButton = { TextButton(onClick = vm::clearDeleteError) { Text("确定") } })
+    }
 
-    ProvidersContent(
-        config = config,
-        onOpenDrawer = openDrawer,
-        onAddProvider = { navController.safeNavigateDirect(Routes.providerEdit("new")) },
-        onSelectProvider = { id -> vm.select(id) },
-        onEditProvider = { id -> navController.safeNavigateDirect(Routes.providerEdit(id)) },
-        onDeleteProvider = { id -> vm.deleteProvider(id) }
-    )
+
+    ConfigurationTransferHost(
+        kind = TransferKind.PROVIDERS,
+        transfer = app.configurationTransfer,
+        onImportSuccess = { vm.refresh() }
+    ) { actions ->
+        ProvidersContent(
+            config = config,
+            onOpenDrawer = openDrawer,
+            onAddProvider = { navController.safeNavigateDirect(Routes.providerEdit("new")) },
+            onSelectProvider = { id -> vm.select(id) },
+            onEditProvider = { id -> navController.safeNavigateDirect(Routes.providerEdit(id)) },
+            onDeleteProvider = { id -> vm.deleteProvider(id) },
+            onImport = actions.onImport,
+            onExportSelected = actions.onExportSelected,
+            onDeleteSelected = vm::deleteSelected,
+            busy = actions.busy || deleting
+        )
+    }
 }
 
 /**
@@ -216,14 +273,24 @@ fun ProvidersContent(
     onAddProvider: () -> Unit,
     onSelectProvider: (String) -> Unit,
     onEditProvider: (String) -> Unit,
-    onDeleteProvider: (String) -> Unit
+    onDeleteProvider: (String) -> Unit,
+    onImport: () -> Unit = {},
+    onExportSelected: (Set<String>) -> Unit = {},
+    onDeleteSelected: (Set<String>) -> Unit = {},
+    busy: Boolean = false
 ) {
+    val selection = rememberListSelection(config.providers.map { it.id }, config.providers.associate { it.id to it.name.ifBlank { it.model } })
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("模型配置") },
                 navigationIcon = {
                     IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "菜单") }
+                },
+                actions = {
+                    TextButton(onClick = if (selection.active) selection.onExit else selection.onEnter,
+                        enabled = !busy) { Text(if (selection.active) "完成" else "管理") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
@@ -232,9 +299,15 @@ fun ProvidersContent(
                 )
             )
         },
+        bottomBar = {
+            if (selection.active) ListSelectionBar(selection, busy, onDeleteSelected,
+                onImport = onImport, onExport = onExportSelected)
+        },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAddProvider) {
-                Icon(Icons.Filled.Add, "添加")
+            if (!selection.active) {
+                FloatingActionButton(onClick = { if (!busy) onAddProvider() }) {
+                    Icon(Icons.Filled.Add, "添加")
+                }
             }
         }
     ) { padding ->
@@ -264,17 +337,23 @@ fun ProvidersContent(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                         ),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            onEditProvider(p.id)
-                        }
+                        onClick = { if (!busy) {
+                            if (selection.active) selection.onToggle(p.id) else onEditProvider(p.id)
+                        } },
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            RadioButton(
+                            if (selection.active) Checkbox(
+                                checked = p.id in selection.selectedIds,
+                                onCheckedChange = { selection.onToggle(p.id) },
+                                enabled = !busy
+                            ) else RadioButton(
                                 selected = p.id == config.selectedProviderId,
-                                onClick = { onSelectProvider(p.id) }
+                                onClick = { onSelectProvider(p.id) },
+                                enabled = !busy
                             )
                             Column(Modifier.weight(1f)) {
                                 Text(
@@ -293,8 +372,10 @@ fun ProvidersContent(
                                     maxLines = 1
                                 )
                             }
-                            IconButton(onClick = { onDeleteProvider(p.id) }) {
-                                Icon(Icons.Filled.Delete, "删除")
+                            if (!selection.active) {
+                                IconButton(onClick = { onDeleteProvider(p.id) }, enabled = !busy) {
+                                    Icon(Icons.Filled.Delete, "删除")
+                                }
                             }
                         }
                     }
@@ -361,6 +442,7 @@ fun ProviderEditContent(
     var name by remember { mutableStateOf(initialConfig?.name ?: "") }
     var type by remember { mutableStateOf(initialConfig?.type ?: ProviderType.OPENAI) }
     var baseUrl by remember { mutableStateOf(initialConfig?.baseUrl ?: defaultBaseUrl(type)) }
+    var modelsUrl by remember { mutableStateOf(initialConfig?.modelsUrl ?: "") }
     var apiKey by remember { mutableStateOf(initialConfig?.apiKey ?: "") }
     var model by remember { mutableStateOf(initialConfig?.model ?: "") }
     var temperature by remember { mutableStateOf(initialConfig?.temperature?.toString() ?: "") }
@@ -380,6 +462,7 @@ fun ProviderEditContent(
         name = name.trim(),
         type = type,
         baseUrl = baseUrl.trim(),
+        modelsUrl = modelsUrl.trim(),
         apiKey = apiKey.trim(),
         model = model.trim(),
         temperature = temperature.toFloatOrNull(),
@@ -468,6 +551,13 @@ fun ProviderEditContent(
                 label = { Text("Base URL") }, singleLine = true,
                 supportingText = { Text(baseUrlHint(type)) }
             )
+            if (type != ProviderType.CUSTOM) {
+                OutlinedTextField(
+                    modelsUrl, { modelsUrl = it }, Modifier.fillMaxWidth(),
+                    label = { Text("模型列表 URL（可选）") }, singleLine = true,
+                    supportingText = { Text("留空自动识别；DeepSeek 两种协议均使用 /models。特殊网关可填完整地址。") }
+                )
+            }
             OutlinedTextField(
                 apiKey, { apiKey = it }, Modifier.fillMaxWidth(),
                 label = { Text("API Key") }, singleLine = true,

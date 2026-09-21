@@ -57,6 +57,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.sp
 import com.example.myapplication.agent.Tools
+import com.example.myapplication.ui.components.rememberListSelection
+import com.example.myapplication.ui.components.ListSelectionBar
+import kotlinx.coroutines.CancellationException
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,7 +72,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -78,10 +81,12 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
 import com.example.myapplication.AgentApp
 import com.example.myapplication.Routes
+import com.example.myapplication.data.backup.TransferKind
 import com.example.myapplication.safeNavigateDirect
 import com.example.myapplication.safePopBackStack
 import com.example.myapplication.ui.theme.AgentTheme
 import com.example.myapplication.ui.theme.ExpressiveTokens
+import com.example.myapplication.ui.transfer.ConfigurationTransferHost
 import com.example.myapplication.data.model.AgentProfile
 import com.example.myapplication.data.model.ProviderConfig
 import kotlinx.coroutines.Dispatchers
@@ -91,12 +96,43 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 class AgentsViewModel(val app: AgentApp) : ViewModel() {
+    private val _deleting = MutableStateFlow(false)
+    val deleting = _deleting.asStateFlow()
+    private val _deleteError = MutableStateFlow<String?>(null)
+    val deleteError = _deleteError.asStateFlow()
+    fun clearDeleteError() { _deleteError.value = null }
+
+    fun deleteSelected(ids: Set<String>) {
+        if (_deleting.value || ids.isEmpty()) return
+        _deleting.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                app.store.saveAgents(app.store.loadAgents().filterNot { it.id in ids })
+                _agents.value = app.store.loadAgents()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _deleteError.value = error.message ?: "删除失败"
+            } finally {
+                _deleting.value = false
+            }
+        }
+    }
+
     private val _agents = MutableStateFlow<List<AgentProfile>>(emptyList())
     val agents = _agents.asStateFlow()
 
+    private val _providers = MutableStateFlow<List<ProviderConfig>>(emptyList())
+    val providers = _providers.asStateFlow()
+
+    private val _loading = MutableStateFlow(true)
+    val loading = _loading.asStateFlow()
+
     fun refresh() {
         viewModelScope.launch(Dispatchers.IO) {
+            _providers.value = app.store.loadConfig().providers
             _agents.value = app.store.loadAgents()
+            _loading.value = false
         }
     }
 
@@ -128,28 +164,58 @@ fun AgentsScreen(navController: NavHostController, openDrawer: () -> Unit) {
     val vm: AgentsViewModel = viewModel(factory = viewModelFactory {
         initializer { AgentsViewModel(app) }
     })
-    LifecycleResumeEffect(Unit) {
+    // STARTED 已处于入场动画阶段；等到 RESUMED 才刷新会推迟首屏数据加载。
+    LifecycleStartEffect(Unit) {
         vm.refresh()
-        onPauseOrDispose { }
+        onStopOrDispose { }
     }
     val agents by vm.agents.collectAsStateWithLifecycle()
+    val providers by vm.providers.collectAsStateWithLifecycle()
+    val loading by vm.loading.collectAsStateWithLifecycle()
+    val deleting by vm.deleting.collectAsStateWithLifecycle()
+    val deleteError by vm.deleteError.collectAsStateWithLifecycle()
+    deleteError?.let { message ->
+        AlertDialog(onDismissRequest = vm::clearDeleteError,
+            title = { Text("删除失败") }, text = { Text(message) },
+            confirmButton = { TextButton(onClick = vm::clearDeleteError) { Text("确定") } })
+    }
 
-    AgentsContent(
-        agents = agents,
-        modelLabel = { agent ->
-            agent.model?.let { m ->
-                val p = agent.providerId?.let { id ->
-                    app.store.loadConfig().providers.firstOrNull { it.id == id }
+
+    ConfigurationTransferHost(
+        kind = TransferKind.AGENTS,
+        transfer = app.configurationTransfer,
+        onImportSuccess = { vm.refresh() }
+    ) { actions ->
+        AgentsContent(
+            agents = agents,
+            loading = loading,
+            modelLabel = { agent ->
+                val provider = agent.providerId?.let { id ->
+                    providers.firstOrNull { it.id == id }
                 }
-                "${p?.name?.ifBlank { p.model } ?: ""} / $m"
-            } ?: "跟随全局选中模型"
-        },
-        onOpenDrawer = openDrawer,
-        onNewAgent = { navController.safeNavigateDirect(Routes.agentEdit("new")) },
-        onSelectAgent = { id -> navController.safeNavigateDirect(Routes.agentEdit(id)) },
-        onDeleteAgent = { id -> vm.delete(id) },
-        onResetToDefaults = { vm.resetToDefaults() }
-    )
+                when {
+                    agent.providerId != null && provider == null -> {
+                        "模型配置待导入或重新选择" + agent.model?.let { " / $it" }.orEmpty()
+                    }
+
+                    agent.model != null -> {
+                        "${provider?.name?.ifBlank { provider.model } ?: ""} / ${agent.model}"
+                    }
+
+                    else -> "跟随全局选中模型"
+                }
+            },
+            onOpenDrawer = openDrawer,
+            onNewAgent = { navController.safeNavigateDirect(Routes.agentEdit("new")) },
+            onSelectAgent = { id -> navController.safeNavigateDirect(Routes.agentEdit(id)) },
+            onDeleteAgent = { id -> vm.delete(id) },
+            onResetToDefaults = { vm.resetToDefaults() },
+            onImport = actions.onImport,
+            onExportSelected = actions.onExportSelected,
+            onDeleteSelected = vm::deleteSelected,
+            busy = actions.busy || deleting
+        )
+    }
 }
 
 /**
@@ -164,8 +230,15 @@ fun AgentsContent(
     onNewAgent: () -> Unit,
     onSelectAgent: (String) -> Unit,
     onDeleteAgent: (String) -> Unit,
-    onResetToDefaults: () -> Unit
+    onResetToDefaults: () -> Unit,
+    loading: Boolean = false,
+    onImport: () -> Unit = {},
+    onExportSelected: (Set<String>) -> Unit = {},
+    onDeleteSelected: (Set<String>) -> Unit = {},
+    busy: Boolean = false
 ) {
+    val selection = rememberListSelection(agents.map { it.id }, agents.associate { it.id to it.name })
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -174,8 +247,12 @@ fun AgentsContent(
                     IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "菜单") }
                 },
                 actions = {
-                    IconButton(onClick = onResetToDefaults) {
-                        Icon(Icons.Filled.AutoAwesome, "载入默认预设")
+                    TextButton(onClick = if (selection.active) selection.onExit else selection.onEnter,
+                        enabled = !busy) { Text(if (selection.active) "完成" else "管理") }
+                    if (!selection.active) {
+                        IconButton(onClick = onResetToDefaults, enabled = !busy) {
+                            Icon(Icons.Filled.AutoAwesome, "载入默认预设")
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -185,13 +262,23 @@ fun AgentsContent(
                 )
             )
         },
+        bottomBar = {
+            if (selection.active) ListSelectionBar(selection, busy, onDeleteSelected,
+                onImport = onImport, onExport = onExportSelected)
+        },
         floatingActionButton = {
-            FloatingActionButton(onClick = onNewAgent) {
-                Icon(Icons.Filled.Add, "新建 Agent")
+            if (!selection.active) {
+                FloatingActionButton(onClick = { if (!busy) onNewAgent() }) {
+                    Icon(Icons.Filled.Add, "新建 Agent")
+                }
             }
         }
     ) { padding ->
-        if (agents.isEmpty()) {
+        if (loading) {
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                androidx.compose.material3.CircularProgressIndicator()
+            }
+        } else if (agents.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -203,7 +290,7 @@ fun AgentsContent(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
                     )
-                    OutlinedButton(onClick = onResetToDefaults) {
+                    OutlinedButton(onClick = onResetToDefaults, enabled = !busy) {
                         Icon(Icons.Filled.AutoAwesome, null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("载入默认预设")
@@ -228,14 +315,20 @@ fun AgentsContent(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                         ),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            onSelectAgent(agent.id)
-                        }
+                        onClick = { if (!busy) {
+                            if (selection.active) selection.onToggle(agent.id) else onSelectAgent(agent.id)
+                        } },
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (selection.active) Checkbox(
+                                checked = agent.id in selection.selectedIds,
+                                onCheckedChange = { selection.onToggle(agent.id) },
+                                enabled = !busy
+                            )
                             AgentAvatar(
                                 emoji = agent.emoji,
                                 avatarPath = agent.avatarPath,
@@ -257,8 +350,10 @@ fun AgentsContent(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            IconButton(onClick = { onDeleteAgent(agent.id) }) {
-                                Icon(Icons.Filled.Delete, "删除")
+                            if (!selection.active) {
+                                IconButton(onClick = { onDeleteAgent(agent.id) }, enabled = !busy) {
+                                    Icon(Icons.Filled.Delete, "删除")
+                                }
                             }
                         }
                     }

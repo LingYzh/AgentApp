@@ -7,7 +7,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -38,6 +38,8 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -49,13 +51,16 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,12 +80,17 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
 import com.example.myapplication.AgentApp
 import com.example.myapplication.Routes
+import com.example.myapplication.ui.components.ListSelectionBar
+import com.example.myapplication.ui.components.rememberListSelection
 import com.example.myapplication.data.model.SkillMeta
 import com.example.myapplication.safeNavigateDirect
 import com.example.myapplication.safePopBackStack
 import com.example.myapplication.ui.theme.AgentTheme
 import com.example.myapplication.ui.theme.ExpressiveTokens
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -127,17 +137,41 @@ fun shareSkillZip(context: Context, zipFile: File, chooserTitle: String = "分�
 class SkillsViewModel(val app: AgentApp) : ViewModel() {
     private val _skills = MutableStateFlow<List<SkillMeta>>(emptyList())
     val skills = _skills.asStateFlow()
+    private val _busy = MutableStateFlow(false)
+    val busy = _busy.asStateFlow()
+    private val _message = MutableStateFlow<String?>(null)
+    val message = _message.asStateFlow()
 
     fun refresh() {
         viewModelScope.launch(Dispatchers.IO) {
-            _skills.value = app.store.listSkills()
+            reload()
         }
     }
 
     fun delete(name: String) {
+        deleteSelected(setOf(name))
+    }
+
+    /** Batch delete runs one storage pass and refreshes the list once. */
+    fun deleteSelected(names: Set<String>) {
+        if (_busy.value || names.isEmpty()) return
+        _busy.value = true
         viewModelScope.launch(Dispatchers.IO) {
-            app.store.deleteSkill(name)
-            refresh()
+            try {
+                names.forEach { name ->
+                    currentCoroutineContext().ensureActive()
+                    app.store.deleteSkill(name)
+                }
+                reload()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                // Reflect any earlier deletions if a later item fails.
+                runCatching { reload() }
+                _message.value = "删除失败: ${error.message ?: error.javaClass.simpleName}"
+            } finally {
+                _busy.value = false
+            }
         }
     }
 
@@ -146,13 +180,24 @@ class SkillsViewModel(val app: AgentApp) : ViewModel() {
         onSuccess: (List<SkillMeta>) -> Unit,
         onError: (String) -> Unit
     ) {
+        if (_busy.value) {
+            inputStream.close()
+            return
+        }
+        _busy.value = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                currentCoroutineContext().ensureActive()
                 val imported = inputStream.use { app.store.importSkillZip(it) }
-                refresh()
+                currentCoroutineContext().ensureActive()
+                reload()
                 onSuccess(imported)
-            } catch (e: Exception) {
-                onError(e.localizedMessage ?: "导入技能失败")
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                onError(error.localizedMessage ?: "导入技能失败")
+            } finally {
+                _busy.value = false
             }
         }
     }
@@ -162,12 +207,20 @@ class SkillsViewModel(val app: AgentApp) : ViewModel() {
         onSuccess: (File) -> Unit,
         onError: (String) -> Unit
     ) {
+        if (_busy.value) return
+        _busy.value = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                currentCoroutineContext().ensureActive()
                 val file = app.store.exportSkillZip(name)
+                currentCoroutineContext().ensureActive()
                 onSuccess(file)
-            } catch (e: Exception) {
-                onError(e.localizedMessage ?: "导出技能失败")
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                onError(error.localizedMessage ?: "导出技能失败")
+            } finally {
+                _busy.value = false
             }
         }
     }
@@ -176,14 +229,62 @@ class SkillsViewModel(val app: AgentApp) : ViewModel() {
         onSuccess: (File) -> Unit,
         onError: (String) -> Unit
     ) {
+        if (_busy.value) return
+        _busy.value = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                currentCoroutineContext().ensureActive()
                 val file = app.store.exportAllSkillsZip()
+                currentCoroutineContext().ensureActive()
                 onSuccess(file)
-            } catch (e: Exception) {
-                onError(e.localizedMessage ?: "导出全部技能失败")
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                onError(error.localizedMessage ?: "导出全部技能失败")
+            } finally {
+                _busy.value = false
             }
         }
+    }
+
+    /** 将选定技能合集保存到 SAF 位置；选定导出不经过分享面板。 */
+    fun exportSelected(
+        names: Set<String>,
+        uri: Uri,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (_busy.value || names.isEmpty()) return
+        _busy.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                currentCoroutineContext().ensureActive()
+                val zipFile = app.store.exportSkillsZip(names)
+                currentCoroutineContext().ensureActive()
+                val output = app.contentResolver.openOutputStream(uri)
+                    ?: throw IllegalStateException("无法打开导出位置")
+                output.use { stream ->
+                    zipFile.inputStream().use { input -> input.copyTo(stream) }
+                }
+                currentCoroutineContext().ensureActive()
+                onSuccess()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                onError(error.localizedMessage ?: "导出所选技能失败")
+            } finally {
+                _busy.value = false
+            }
+        }
+    }
+
+    private suspend fun reload() {
+        currentCoroutineContext().ensureActive()
+        _skills.value = app.store.listSkills()
+    }
+
+    fun clearMessage() {
+        _message.value = null
     }
 }
 
@@ -198,15 +299,25 @@ fun SkillsScreen(navController: NavHostController, openDrawer: () -> Unit) {
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+    androidx.lifecycle.compose.LifecycleStartEffect(Unit) {
         vm.refresh()
-        onPauseOrDispose { }
+        onStopOrDispose { }
     }
     val skills by vm.skills.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val message by vm.message.collectAsStateWithLifecycle()
+    LaunchedEffect(message) {
+        message?.let {
+            snackbarHostState.showSnackbar(it)
+            vm.clearMessage()
+        }
+    }
 
+    var importPickerActive by rememberSaveable { mutableStateOf(false) }
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
+        importPickerActive = false
         if (uri != null) {
             val stream = try {
                 context.contentResolver.openInputStream(uri)
@@ -235,6 +346,29 @@ fun SkillsScreen(navController: NavHostController, openDrawer: () -> Unit) {
             }
         }
     }
+    var exportNames by rememberSaveable { mutableStateOf<List<String>>(arrayListOf()) }
+    var exportPickerActive by rememberSaveable { mutableStateOf(false) }
+    val exportPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        val snapshot = exportNames.toSet()
+        exportPickerActive = false
+        if (uri != null && snapshot.isNotEmpty()) {
+            vm.exportSelected(
+                names = snapshot,
+                uri = uri,
+                onSuccess = {
+                    coroutineScope.launch { snackbarHostState.showSnackbar("已导出 ${snapshot.size} 个技能") }
+                },
+                onError = { error ->
+                    coroutineScope.launch { snackbarHostState.showSnackbar("导出失败: $error") }
+                }
+            )
+        }
+    }
+    var exportConfirmNames by rememberSaveable { mutableStateOf<List<String>>(arrayListOf()) }
+    val transferBusy = busy || importPickerActive || exportPickerActive ||
+        exportConfirmNames.isNotEmpty()
 
     SkillsContent(
         skills = skills,
@@ -243,35 +377,79 @@ fun SkillsScreen(navController: NavHostController, openDrawer: () -> Unit) {
         onNewSkill = { navController.safeNavigateDirect(Routes.skillEdit("new")) },
         onSelectSkill = { name -> navController.safeNavigateDirect(Routes.skillEdit(name)) },
         onDeleteSkill = { name -> vm.delete(name) },
+        onDeleteSelected = vm::deleteSelected,
         onImportZip = {
-            filePickerLauncher.launch("*/*")
+            if (!transferBusy) {
+                importPickerActive = true
+                filePickerLauncher.launch("*/*")
+            }
         },
         onExportSkill = { name ->
-            vm.exportSkill(
-                name = name,
-                onSuccess = { zipFile ->
-                    shareSkillZip(context, zipFile, "分享技能 $name")
-                },
-                onError = { err ->
-                    coroutineScope.launch {
-                        snackbarHostState.showSnackbar("导出失败: $err")
+            if (!transferBusy) {
+                vm.exportSkill(
+                    name = name,
+                    onSuccess = { zipFile ->
+                        shareSkillZip(context, zipFile, "分享技能 $name")
+                    },
+                    onError = { err ->
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("导出失败: $err")
+                        }
                     }
-                }
-            )
+                )
+            }
         },
         onExportAll = {
-            vm.exportAll(
-                onSuccess = { zipFile ->
-                    shareSkillZip(context, zipFile, "分享所有技能备份")
-                },
-                onError = { err ->
-                    coroutineScope.launch {
-                        snackbarHostState.showSnackbar("导出失败: $err")
+            if (!transferBusy) {
+                vm.exportAll(
+                    onSuccess = { zipFile ->
+                        shareSkillZip(context, zipFile, "分享所有技能备份")
+                    },
+                    onError = { err ->
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("导出失败: $err")
+                        }
                     }
-                }
-            )
-        }
+                )
+            }
+        },
+        onExportSelected = { names ->
+            if (!transferBusy && names.isNotEmpty()) {
+                exportConfirmNames = names.toList()
+            }
+        },
+        busy = transferBusy
     )
+
+    if (exportConfirmNames.isNotEmpty()) {
+        val snapshot = exportConfirmNames
+        AlertDialog(
+            onDismissRequest = { exportConfirmNames = arrayListOf() },
+            title = { Text("确认导出所选 Skills？") },
+            text = {
+                Column {
+                    Text("将导出 ${snapshot.size} 个 Skill：")
+                    Text(
+                        snapshot.joinToString("\n"),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 8.dp).heightIn(max = 240.dp)
+                            .verticalScroll(rememberScrollState())
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { exportConfirmNames = arrayListOf() }) { Text("取消") }
+            },
+            confirmButton = {
+                TextButton(enabled = !busy, onClick = {
+                    exportConfirmNames = arrayListOf()
+                    exportNames = snapshot
+                    exportPickerActive = true
+                    exportPickerLauncher.launch("skills-selected.zip")
+                }) { Text("选择保存位置") }
+            }
+        )
+    }
 }
 
 /**
@@ -288,21 +466,41 @@ fun SkillsContent(
     onDeleteSkill: (String) -> Unit,
     onImportZip: () -> Unit = {},
     onExportSkill: (String) -> Unit = {},
-    onExportAll: () -> Unit = {}
+    onExportAll: () -> Unit = {},
+    onDeleteSelected: (Set<String>) -> Unit = { names -> names.forEach(onDeleteSkill) },
+    onExportSelected: (Set<String>) -> Unit = {},
+    busy: Boolean = false
 ) {
+    val selection = rememberListSelection(skills.map { it.name })
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Skills 扩展") },
                 navigationIcon = {
-                    IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "菜单") }
+                    if (selection.active) {
+                        IconButton(onClick = selection.onExit, enabled = !busy) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "退出管理")
+                        }
+                    } else {
+                        IconButton(onClick = onOpenDrawer, enabled = !busy) {
+                            Icon(Icons.Filled.Menu, "菜单")
+                        }
+                    }
                 },
                 actions = {
-                    IconButton(onClick = onImportZip) {
-                        Icon(Icons.Filled.FileUpload, "导入 Skill (ZIP)")
+                    TextButton(
+                        onClick = if (selection.active) selection.onExit else selection.onEnter,
+                        enabled = !busy
+                    ) {
+                        Text(if (selection.active) "完成" else "管理")
                     }
-                    IconButton(onClick = onExportAll) {
-                        Icon(Icons.Filled.FileDownload, "导出全部 (ZIP)")
+                    if (!selection.active) {
+                        IconButton(onClick = onImportZip, enabled = !busy) {
+                            Icon(Icons.Filled.FileUpload, "导入 Skill (ZIP)")
+                        }
+                        IconButton(onClick = onExportAll, enabled = !busy) {
+                            Icon(Icons.Filled.FileDownload, "导出全部 (ZIP)")
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -314,9 +512,22 @@ fun SkillsContent(
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        bottomBar = {
+            if (selection.active) {
+                ListSelectionBar(
+                    selection = selection,
+                    busy = busy,
+                    onDelete = onDeleteSelected,
+                    onImport = onImportZip,
+                    onExport = onExportSelected
+                )
+            }
+        },
         floatingActionButton = {
-            FloatingActionButton(onClick = onNewSkill) {
-                Icon(Icons.Filled.Add, "新建 Skill")
+            if (!selection.active) {
+                FloatingActionButton(onClick = { if (!busy) onNewSkill() }) {
+                    Icon(Icons.Filled.Add, "新建 Skill")
+                }
             }
         }
     ) { padding ->
@@ -346,9 +557,13 @@ fun SkillsContent(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                         ),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            onSelectSkill(skill.name)
-                        }
+                        onClick = {
+                            if (!busy) {
+                                if (selection.active) selection.onToggle(skill.name)
+                                else onSelectSkill(skill.name)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(
                             modifier = Modifier
@@ -362,6 +577,13 @@ fun SkillsContent(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
+                                if (selection.active) {
+                                    Checkbox(
+                                        checked = skill.name in selection.selectedIds,
+                                        onCheckedChange = { selection.onToggle(skill.name) },
+                                        enabled = !busy
+                                    )
+                                }
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),
                                     color = MaterialTheme.colorScheme.primaryContainer,
@@ -439,31 +661,35 @@ fun SkillsContent(
                                 }
 
                                 // 操作按钮组
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    IconButton(
-                                        onClick = { onExportSkill(skill.name) },
-                                        modifier = Modifier.size(32.dp)
+                                if (!selection.active) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Share,
-                                            contentDescription = "导出并分享 ZIP",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                    IconButton(
-                                        onClick = { onDeleteSkill(skill.name) },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Delete,
-                                            contentDescription = "删除",
-                                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
-                                            modifier = Modifier.size(16.dp)
-                                        )
+                                        IconButton(
+                                            onClick = { onExportSkill(skill.name) },
+                                            enabled = !busy,
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Share,
+                                                contentDescription = "导出并分享 ZIP",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = { onDeleteSkill(skill.name) },
+                                            enabled = !busy,
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Delete,
+                                                contentDescription = "删除",
+                                                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }

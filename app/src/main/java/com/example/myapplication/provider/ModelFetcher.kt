@@ -12,58 +12,63 @@ import okhttp3.Request
 /** 从供应商的 /models 接口拉取可用模型列表 */
 class ModelFetcher(private val client: OkHttpClient) {
 
-    suspend fun fetchModels(config: ProviderConfig): List<String> {
-        val base = config.baseUrl.trimEnd('/')
-        val requestBuilder = when (config.type) {
-            ProviderType.OPENAI -> {
-                val url = if (base.endsWith("/models")) base else "$base/models"
-                Request.Builder().url(url).apply {
-                    if (config.apiKey.isNotBlank()) header("Authorization", "Bearer ${config.apiKey}")
-                }
-            }
-            ProviderType.ANTHROPIC -> {
-                val url = when {
-                    base.endsWith("/models") -> base
-                    base.endsWith("/v1") -> "$base/models"
-                    else -> "$base/v1/models"
-                }
-                Request.Builder().url(url)
-                    .header("anthropic-version", "2023-06-01")
-                    .apply {
-                        if (config.apiKey.isNotBlank()) header("x-api-key", config.apiKey)
-                    }
-            }
-            ProviderType.GEMINI -> {
-                val raw = when {
-                    base.endsWith("/models") -> base
-                    base.endsWith("/v1beta") -> "$base/models"
-                    else -> "$base/v1beta/models"
-                }
-                val url = raw.toHttpUrlOrNull()?.newBuilder()
-                    ?.apply {
-                        if (config.apiKey.isNotBlank()) addQueryParameter("key", config.apiKey)
-                    }
-                    ?.build() ?: throw ApiException(-1, "非法的 Gemini Base URL: $raw")
-                Request.Builder().url(url)
-            }
-            ProviderType.CUSTOM ->
-                throw ApiException(-1, "自定义模板类型不支持拉取模型列表，请手动填写模型名")
-        }
-        config.extraHeaders.forEach { (k, v) -> requestBuilder.header(k, v) }
-
-        client.newCall(requestBuilder.build()).execute().use { resp ->
+    suspend fun fetchModels(config: ProviderConfig): List<String> =
+        withCancellableResponse(client, buildModelsRequest(config)) { resp ->
             if (!resp.isSuccessful) {
-                val body = runCatching { resp.body?.string() }.getOrNull().orEmpty()
-                throw ApiException(resp.code, body.take(1000))
+                throw ApiException(resp.code, "获取模型列表失败，请检查模型列表地址、凭据与权限")
             }
             val body = resp.body?.string().orEmpty()
             val json = runCatching { ProviderJson.parseToJsonElement(body).jsonObject }
                 .getOrElse { throw ApiException(-1, "响应不是合法 JSON") }
-            return when (config.type) {
+            when (config.type) {
                 ProviderType.GEMINI -> parseGeminiModels(json.toString())
                 else -> parseOpenAiStyleModels(json.toString())
             }
         }
+
+    /** 已知网关按供应商规则解析；未知网关保留路径前缀，允许显式指定列表地址。 */
+    internal fun buildModelsRequest(config: ProviderConfig): Request {
+        if (config.type == ProviderType.CUSTOM) {
+            throw ApiException(-1, "自定义模板类型不支持拉取模型列表，请手动填写模型名")
+        }
+        val base = config.baseUrl.trim().toHttpUrlOrNull()
+            ?: throw ApiException(-1, "非法的 Base URL")
+        val override = config.modelsUrl.trim().takeIf { it.isNotEmpty() }
+        val isDeepSeek = base.host == "api.deepseek.com" &&
+            config.type in setOf(ProviderType.OPENAI, ProviderType.ANTHROPIC)
+        val target = if (override != null) {
+            override.toHttpUrlOrNull() ?: throw ApiException(-1, "非法的模型列表 URL")
+        } else {
+            val path = base.encodedPath.trimEnd('/')
+            val modelPath = when {
+                isDeepSeek -> "/models"
+                path.endsWith("/models") -> path
+                config.type == ProviderType.ANTHROPIC ->
+                    if (path.endsWith("/v1")) "$path/models" else "$path/v1/models"
+                config.type == ProviderType.GEMINI ->
+                    if (path.endsWith("/v1beta")) "$path/models" else "$path/v1beta/models"
+                else -> "$path/models"
+            }
+            base.newBuilder().encodedPath(modelPath).fragment(null).build()
+        }
+        // DeepSeek 的列表接口使用 OpenAI 鉴权，即使聊天走 Anthropic 网关。
+        val usesBearer = config.type == ProviderType.OPENAI ||
+            (isDeepSeek && target.host == "api.deepseek.com" && target.encodedPath.trimEnd('/') == "/models")
+        val url = target.newBuilder().fragment(null).apply {
+            if (config.type == ProviderType.GEMINI && config.apiKey.isNotBlank()) {
+                setQueryParameter("key", config.apiKey)
+            }
+        }.build()
+        val builder = Request.Builder().url(url)
+        when {
+            usesBearer -> if (config.apiKey.isNotBlank()) builder.header("Authorization", "Bearer ${config.apiKey}")
+            config.type == ProviderType.ANTHROPIC -> {
+                builder.header("anthropic-version", "2023-06-01")
+                if (config.apiKey.isNotBlank()) builder.header("x-api-key", config.apiKey)
+            }
+        }
+        config.extraHeaders.forEach { (key, value) -> builder.header(key, value) }
+        return builder.build()
     }
 
     companion object {

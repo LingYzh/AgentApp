@@ -5,6 +5,7 @@ import com.example.myapplication.provider.ToolSpec
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import com.example.myapplication.provider.ProviderJson
+import kotlinx.coroutines.CancellationException
 
 /**
  * 工具执行器。所有文件操作限定在应用私有目录内（FileStore 做路径越界校验）。
@@ -25,8 +26,13 @@ class ToolExecutor(
     /** 执行工具，返回给模型的文本结果。错误以 "错误: " 前缀返回而不是抛出。 */
     suspend fun execute(name: String, argumentsJson: String): String {
         if (specs().none { it.name == name }) return "错误: 工具 '$name' 不可用"
-        val args = runCatching { ProviderJson.parseToJsonElement(argumentsJson).jsonObject }
-            .getOrElse { return "错误: 工具参数不是合法 JSON: ${it.message}" }
+        val args = try {
+            ProviderJson.parseToJsonElement(argumentsJson).jsonObject
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return "错误: 工具参数不是合法 JSON: ${e.message}"
+        }
         fun arg(key: String): String {
             return args[key]?.jsonPrimitive?.content ?: ""
         }
@@ -83,6 +89,9 @@ class ToolExecutor(
                 }
                 else -> "错误: 未知工具 '$name'"
             }
+        } catch (e: CancellationException) {
+            // CancellationException 是控制流信号，不能伪装成工具返回值。
+            throw e
         } catch (e: Exception) {
             "错误: ${e.message ?: e.javaClass.simpleName}"
         }

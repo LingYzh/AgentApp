@@ -12,6 +12,12 @@ import com.example.myapplication.provider.ApiProvider
 import com.example.myapplication.provider.ProviderFactory
 import com.example.myapplication.provider.StreamEvent
 import com.example.myapplication.provider.ToolSpec
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -43,7 +49,7 @@ private class FakeProvider(
     }
 }
 
-private class FakeFactory(private val provider: FakeProvider) : ProviderFactory() {
+private class FakeFactory(private val provider: ApiProvider) : ProviderFactory() {
     override fun create(type: ProviderType): ApiProvider = provider
 }
 
@@ -211,5 +217,128 @@ class AgentEngineTest {
 
         assertEquals("p2", fake.receivedConfigs[1].id)
         assertEquals("m-pro", fake.receivedConfigs[1].model)
+    }
+
+    @Test
+    fun `cancellation preserves partial stream and propagates`() = runBlocking {
+        val emitted = CompletableDeferred<Unit>()
+        val fake = object : ApiProvider {
+            override suspend fun streamChat(
+                config: ProviderConfig,
+                system: String,
+                messages: List<ChatMessage>,
+                tools: List<ToolSpec>,
+                onEvent: suspend (StreamEvent) -> Unit
+            ) {
+                onEvent(StreamEvent.Thinking("思考片段"))
+                onEvent(StreamEvent.Text("部分回复"))
+                emitted.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        val conv = newConversation()
+        val engine = AgentEngine(store, FakeFactory(fake))
+        val job = launch { engine.run(conv, config) }
+
+        emitted.await()
+        job.cancelAndJoin()
+
+        assertTrue(job.isCancelled)
+        val assistant = conv.messages.last { it.role == "assistant" }
+        assertTrue(assistant.content.contains("部分回复"))
+        assertTrue(assistant.content.contains("已停止"))
+        assertEquals("思考片段", assistant.thinking)
+        assertTrue(store.loadConversation(conv.id)?.messages?.last()?.content?.contains("已停止") == true)
+    }
+
+    @Test
+    fun `cancellation before subsequent tool leaves balanced responses`() = runBlocking {
+        val fake = FakeProvider(ArrayDeque(listOf(
+            listOf(
+                StreamEvent.ToolCall("first", "list_files", "{}"),
+                StreamEvent.ToolCall("second", "write_file", """{"path":"should-not-exist.txt","content":"x"}"""),
+                StreamEvent.Done("tool_calls")
+            )
+        )))
+        val conv = newConversation()
+        val engine = AgentEngine(store, FakeFactory(fake))
+        lateinit var runJob: Job
+        runJob = launch(start = CoroutineStart.LAZY) {
+            engine.run(
+                conv,
+                config,
+                callbacks = AgentEngine.Callbacks(
+                    onMessageAdded = { message ->
+                        if (message.role == "tool" && message.toolCallId == "first") {
+                            runJob.cancel()
+                        }
+                    }
+                )
+            )
+        }
+        runJob.start()
+        runJob.join()
+
+        assertTrue(runJob.isCancelled)
+        val toolMessages = conv.messages.filter { it.role == "tool" }
+        assertEquals(listOf("first", "second"), toolMessages.map { it.toolCallId })
+        assertTrue(toolMessages[1].content.contains("未执行"))
+        assertTrue(store.listWorkspace().none { it == "should-not-exist.txt" })
+    }
+
+    @Test
+    fun `stream error with tool calls skips every tool`() = runBlocking {
+        val fake = FakeProvider(ArrayDeque(listOf(
+            listOf(
+                StreamEvent.ToolCall("bad", "write_file", """{"path":"error.txt","content":"x"}"""),
+                StreamEvent.Error("上游失败"),
+                StreamEvent.Done("error")
+            )
+        )))
+        val conv = newConversation()
+        AgentEngine(store, FakeFactory(fake)).run(conv, config)
+
+        val assistant = conv.messages.first { it.role == "assistant" }
+        val tool = conv.messages.single { it.role == "tool" }
+        assertTrue(assistant.isError)
+        assertTrue(assistant.content.contains("上游失败"))
+        assertTrue(tool.content.contains("未执行"))
+        assertTrue(store.listWorkspace().none { it == "error.txt" })
+    }
+
+    @Test
+    fun `loop cap balances all pending tool calls`() = runBlocking {
+        val fake = FakeProvider(ArrayDeque(listOf(
+            listOf(
+                StreamEvent.ToolCall("c1", "write_file", """{"path":"cap-1.txt","content":"x"}"""),
+                StreamEvent.ToolCall("c2", "write_file", """{"path":"cap-2.txt","content":"x"}"""),
+                StreamEvent.Done("tool_calls")
+            )
+        )))
+        val conv = newConversation()
+        AgentEngine(store, FakeFactory(fake)).run(conv, config, maxLoops = 0)
+
+        val toolMessages = conv.messages.filter { it.role == "tool" }
+        assertEquals(listOf("c1", "c2"), toolMessages.map { it.toolCallId })
+        assertTrue(toolMessages.all { it.content.contains("未执行") })
+        assertTrue(conv.messages.last().content.contains("最大工具循环"))
+        assertTrue(store.listWorkspace().none { it.startsWith("cap-") })
+    }
+
+    @Test
+    fun `subagent failure is not replaced by an earlier assistant reply`() = runBlocking {
+        val fake = FakeProvider(ArrayDeque(listOf(
+            listOf(
+                StreamEvent.Text("正在处理"),
+                StreamEvent.ToolCall("first", "list_files", "{}"),
+                StreamEvent.Done("tool_calls")
+            ),
+            listOf(StreamEvent.Error("连接失败"))
+        )))
+        val result = SubagentRunner(store, FakeFactory(fake)).run("任务", null, null, config)
+
+        assertTrue(result.startsWith("错误:"))
+        assertTrue(result.contains("连接失败"))
+        assertTrue(!result.contains("正在处理"))
     }
 }

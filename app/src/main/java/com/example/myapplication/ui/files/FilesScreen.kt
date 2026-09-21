@@ -1,10 +1,11 @@
 package com.example.myapplication.ui.files
 
 import android.content.Intent
+import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -29,18 +31,20 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Card
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -48,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,7 +61,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import com.example.myapplication.ui.theme.AgentTheme
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -68,8 +72,15 @@ import com.example.myapplication.AgentApp
 import com.example.myapplication.Routes
 import com.example.myapplication.safeNavigateDirect
 import com.example.myapplication.safePopBackStack
+import com.example.myapplication.data.backup.SelectedFilesExport
+import com.example.myapplication.ui.components.ListSelectionBar
+import com.example.myapplication.ui.components.rememberListSelection
+import com.example.myapplication.ui.theme.AgentTheme
 import com.example.myapplication.ui.theme.ExpressiveTokens
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -80,38 +91,103 @@ class FilesViewModel(val app: AgentApp) : ViewModel() {
     val files = _files.asStateFlow()
     private val _message = MutableStateFlow<String?>(null)
     val message = _message.asStateFlow()
+    private val _busy = MutableStateFlow(false)
+    val busy = _busy.asStateFlow()
 
     fun refresh() {
         viewModelScope.launch(Dispatchers.IO) {
-            _files.value = app.store.listWorkspace().map { it to app.store.workspaceSize(it) }
+            reload()
         }
     }
 
     fun delete(path: String) {
+        deleteSelected(setOf(path))
+    }
+
+    /** Batch delete runs one storage pass and refreshes the list once. */
+    fun deleteSelected(paths: Set<String>) {
+        if (_busy.value || paths.isEmpty()) return
+        _busy.value = true
         viewModelScope.launch(Dispatchers.IO) {
-            app.store.deleteWorkspace(path)
-            refresh()
+            try {
+                paths.forEach { path ->
+                    currentCoroutineContext().ensureActive()
+                    if (!app.store.deleteWorkspace(path)) {
+                        throw IllegalStateException("文件不存在或无法删除: $path")
+                    }
+                }
+                reload()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                // A previous item may already have been removed; reflect partial progress.
+                runCatching { reload() }
+                _message.value = "删除失败: ${error.message ?: error.javaClass.simpleName}"
+            } finally {
+                _busy.value = false
+            }
         }
     }
 
     /** 把 SAF 选中的文件复制进工作区根目录 */
-    fun import(uri: android.net.Uri) {
+    fun import(uri: Uri) {
+        if (_busy.value) return
+        _busy.value = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                currentCoroutineContext().ensureActive()
                 val resolver = app.contentResolver
                 val name = resolver.query(uri, null, null, null, null)?.use { c ->
                     val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                     if (c.moveToFirst() && idx >= 0) c.getString(idx) else null
                 } ?: "uploaded-${System.currentTimeMillis()}"
-                val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+                val target = app.store.workspaceFile(name)
+                target.parentFile?.mkdirs()
+                val input = resolver.openInputStream(uri)
                     ?: throw IllegalStateException("无法读取所选文件")
-                app.store.writeWorkspace(name, String(bytes, Charsets.UTF_8))
+                input.use { source ->
+                    target.outputStream().use { output -> source.copyTo(output) }
+                }
+                currentCoroutineContext().ensureActive()
                 _message.value = "已导入 $name"
-            } catch (e: Exception) {
-                _message.value = "导入失败: ${e.message}"
+                reload()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _message.value = "导入失败: ${error.message ?: error.javaClass.simpleName}"
+            } finally {
+                _busy.value = false
             }
-            refresh()
         }
+    }
+
+    /** 把选定的工作区文件写入用户在 SAF 中选择的位置。 */
+    fun exportSelected(paths: Set<String>, uri: Uri) {
+        if (_busy.value || paths.isEmpty()) return
+        _busy.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                currentCoroutineContext().ensureActive()
+                val output = app.contentResolver.openOutputStream(uri)
+                    ?: throw IllegalStateException("无法打开导出位置")
+                output.use { stream ->
+                    SelectedFilesExport.writeWorkspaceZip(app.store, paths, stream)
+                }
+                currentCoroutineContext().ensureActive()
+                _message.value = "已导出 ${paths.size} 个文件"
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _message.value = "导出失败: ${error.message ?: error.javaClass.simpleName}"
+            } finally {
+                _busy.value = false
+            }
+        }
+    }
+
+    private suspend fun reload() {
+        currentCoroutineContext().ensureActive()
+        _files.value = app.store.listWorkspace().map { it to app.store.workspaceSize(it) }
     }
 
     fun clearMessage() { _message.value = null }
@@ -124,29 +200,92 @@ fun FilesScreen(navController: NavHostController, openDrawer: () -> Unit) {
     val vm: FilesViewModel = viewModel(factory = viewModelFactory {
         initializer { FilesViewModel(app) }
     })
-    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+    androidx.lifecycle.compose.LifecycleStartEffect(Unit) {
         vm.refresh()
-        onPauseOrDispose { }
+        onStopOrDispose { }
     }
     val files by vm.files.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(message) {
         message?.let { snackbar.showSnackbar(it); vm.clearMessage() }
     }
 
-    val picker = rememberLauncherForActivityResult(
+    var importPickerActive by rememberSaveable { mutableStateOf(false) }
+    val importPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
-    ) { uri -> uri?.let { vm.import(it) } }
+    ) { uri ->
+        importPickerActive = false
+        uri?.let { vm.import(it) }
+    }
+    var exportPaths by rememberSaveable { mutableStateOf<List<String>>(arrayListOf()) }
+    var exportPickerActive by rememberSaveable { mutableStateOf(false) }
+    val exportPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        val snapshot = exportPaths.toSet()
+        exportPickerActive = false
+        if (uri != null && snapshot.isNotEmpty()) {
+            vm.exportSelected(snapshot, uri)
+        }
+    }
+    var exportConfirmPaths by rememberSaveable { mutableStateOf<List<String>>(arrayListOf()) }
+    val transferBusy = busy || importPickerActive || exportPickerActive ||
+        exportConfirmPaths.isNotEmpty()
+
+    fun startImport() {
+        if (!transferBusy) {
+            importPickerActive = true
+            importPicker.launch(arrayOf("*/*"))
+        }
+    }
 
     FilesContent(
         files = files,
         onOpenDrawer = openDrawer,
-        onUpload = { picker.launch(arrayOf("*/*")) },
+        onUpload = ::startImport,
         onSelectFile = { path -> navController.safeNavigateDirect(Routes.fileView(path)) },
         onDeleteFile = { path -> vm.delete(path) },
-        snackbarHostState = snackbar
+        onDeleteSelected = vm::deleteSelected,
+        snackbarHostState = snackbar,
+        onExportSelected = { paths ->
+            if (!transferBusy && paths.isNotEmpty()) {
+                exportConfirmPaths = paths.toList()
+            }
+        },
+        busy = transferBusy
     )
+
+    if (exportConfirmPaths.isNotEmpty()) {
+        val snapshot = exportConfirmPaths
+        AlertDialog(
+            onDismissRequest = { exportConfirmPaths = arrayListOf() },
+            title = { Text("确认导出所选文件？") },
+            text = {
+                Column {
+                    Text("将导出 ${snapshot.size} 个文件：")
+                    Text(
+                        snapshot.joinToString("\n"),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 8.dp).heightIn(max = 240.dp)
+                            .verticalScroll(rememberScrollState())
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { exportConfirmPaths = arrayListOf() }) { Text("取消") }
+            },
+            confirmButton = {
+                TextButton(enabled = !busy, onClick = {
+                    exportConfirmPaths = arrayListOf()
+                    exportPaths = snapshot
+                    exportPickerActive = true
+                    exportPicker.launch("workspace-selected.zip")
+                }) { Text("选择保存位置") }
+            }
+        )
+    }
 }
 
 /**
@@ -160,15 +299,35 @@ fun FilesContent(
     onUpload: () -> Unit,
     onSelectFile: (String) -> Unit,
     onDeleteFile: (String) -> Unit,
-    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() }
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
+    onDeleteSelected: (Set<String>) -> Unit = { paths -> paths.forEach(onDeleteFile) },
+    onExportSelected: (Set<String>) -> Unit = {},
+    busy: Boolean = false
 ) {
+    val selection = rememberListSelection(files.map { it.first })
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("文件工作区") },
                 navigationIcon = {
-                    IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "菜单") }
+                    if (selection.active) {
+                        IconButton(onClick = selection.onExit, enabled = !busy) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "退出管理")
+                        }
+                    } else {
+                        IconButton(onClick = onOpenDrawer, enabled = !busy) {
+                            Icon(Icons.Filled.Menu, "菜单")
+                        }
+                    }
+                },
+                actions = {
+                    TextButton(
+                        onClick = if (selection.active) selection.onExit else selection.onEnter,
+                        enabled = !busy
+                    ) {
+                        Text(if (selection.active) "完成" else "管理")
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
@@ -177,9 +336,22 @@ fun FilesContent(
                 )
             )
         },
+        bottomBar = {
+            if (selection.active) {
+                ListSelectionBar(
+                    selection = selection,
+                    busy = busy,
+                    onDelete = onDeleteSelected,
+                    onImport = onUpload,
+                    onExport = onExportSelected
+                )
+            }
+        },
         floatingActionButton = {
-            FloatingActionButton(onClick = onUpload) {
-                Icon(Icons.Filled.UploadFile, "上传文件")
+            if (!selection.active) {
+                FloatingActionButton(onClick = { if (!busy) onUpload() }) {
+                    Icon(Icons.Filled.UploadFile, "上传文件")
+                }
             }
         }
     ) { padding ->
@@ -209,14 +381,24 @@ fun FilesContent(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                         ),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            onSelectFile(path)
-                        }
+                        onClick = {
+                            if (!busy) {
+                                if (selection.active) selection.onToggle(path) else onSelectFile(path)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (selection.active) {
+                                Checkbox(
+                                    checked = path in selection.selectedIds,
+                                    onCheckedChange = { selection.onToggle(path) },
+                                    enabled = !busy
+                                )
+                            }
                             Icon(
                                 Icons.Filled.FileOpen, null,
                                 tint = MaterialTheme.colorScheme.primary
@@ -228,8 +410,10 @@ fun FilesContent(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            IconButton(onClick = { onDeleteFile(path) }) {
-                                Icon(Icons.Filled.Delete, "删除")
+                            if (!selection.active) {
+                                IconButton(onClick = { onDeleteFile(path) }, enabled = !busy) {
+                                    Icon(Icons.Filled.Delete, "删除")
+                                }
                             }
                         }
                     }

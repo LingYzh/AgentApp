@@ -424,6 +424,56 @@ class FileStore(private val root: File) {
         return zipFile
     }
 
+    /**
+     * 将指定的 Skill 目录打包为可再次导入的合集 ZIP。
+     * ZIP 根目录使用已清洗的 Skill 目录名，避免名称中的路径字符污染 entry。
+     */
+    fun exportSkillsZip(names: Set<String>): File {
+        require(names.isNotEmpty()) { "未选择 Skill" }
+
+        val selected = names.toList().sorted().map { name ->
+            val directory = skillDir(name)
+            require(directory.exists() && directory.isDirectory) {
+                "Skill '$name' 不存在"
+            }
+            sanitizeFileName(name) to directory
+        }
+        require(selected.map { it.first }.distinct().size == selected.size) {
+            "所选 Skill 名称重复"
+        }
+
+        val exportsDir = File(backupsDir, "exports").apply { mkdirs() }
+        val zipFile = File(exportsDir, "skills_selected_collections.zip")
+        if (zipFile.exists()) zipFile.delete()
+
+        ZipOutputStream(FileOutputStream(zipFile)).use { zos ->
+            selected.forEach { (entryRoot, directory) ->
+                val rootPath = directory.canonicalFile.path
+                val skillsRoot = skillsDir.canonicalFile.path + File.separator
+                require(rootPath.startsWith(skillsRoot)) {
+                    "Skill 目录越界: ${directory.name}"
+                }
+                val directoryPrefix = rootPath + File.separator
+                directory.walkTopDown().forEach { file ->
+                    if (file.isFile) {
+                        val canonicalFile = file.canonicalFile
+                        require(canonicalFile.path.startsWith(directoryPrefix)) {
+                            "Skill 文件越界: ${file.name}"
+                        }
+                        val relativePath = canonicalFile.path
+                            .removePrefix(directoryPrefix)
+                            .replace(File.separatorChar, '/')
+                        require(relativePath.isNotBlank()) { "Skill 文件路径无效: ${file.name}" }
+                        zos.putNextEntry(ZipEntry("$entryRoot/$relativePath"))
+                        FileInputStream(file).use { input -> input.copyTo(zos) }
+                        zos.closeEntry()
+                    }
+                }
+            }
+        }
+        return zipFile
+    }
+
     // ---------- 工作区文件 ----------
 
     /**
