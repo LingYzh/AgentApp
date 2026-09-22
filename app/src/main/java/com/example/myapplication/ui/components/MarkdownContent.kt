@@ -1,5 +1,9 @@
 package com.example.myapplication.ui.components
 
+import com.example.myapplication.ui.components.UiTextButton
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -88,7 +92,7 @@ private fun MarkdownBlocks(blocks: List<MarkdownBlock>, modifier: Modifier = Mod
 @Composable
 private fun RichMarkdownText(
     runs: List<MarkdownRun>, modifier: Modifier = Modifier,
-    style: TextStyle = TextStyle(fontSize = 16.sp, lineHeight = 26.sp),
+    style: TextStyle = TextStyle(fontSize = 16.sp, lineHeight = 29.sp),
     textAlign: TextAlign = TextAlign.Start
 ) {
     val colors = MaterialTheme.colorScheme
@@ -139,7 +143,7 @@ private fun MarkdownList(block: MarkdownBlock.Items) {
                 })) + original.drop(1)
             } else original
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                Text(marker, Modifier.widthIn(min = 18.dp), fontSize = 16.sp, lineHeight = 26.sp,
+                Text(marker, Modifier.widthIn(min = 18.dp), fontSize = 16.sp, lineHeight = 29.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 MarkdownBlocks(content, Modifier.weight(1f))
             }
@@ -150,7 +154,9 @@ private fun MarkdownList(block: MarkdownBlock.Items) {
 @Composable
 private fun MarkdownCode(block: MarkdownBlock.Code) {
     val clipboard = LocalClipboardManager.current
-    var wrap by remember { mutableStateOf(true) }
+    var wrap by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var animateResize by remember { mutableStateOf(false) }
+    LaunchedEffect(wrap) { if (animateResize) { delay(240); animateResize = false } }
     var copied by remember(block.text) { mutableStateOf(false) }
     Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerLow,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.fillMaxWidth()) {
@@ -158,14 +164,17 @@ private fun MarkdownCode(block: MarkdownBlock.Code) {
             Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(block.language.ifBlank { "代码" }, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                TextButton(onClick = { wrap = !wrap }) { Text(if (wrap) "不换行" else "换行", style = MaterialTheme.typography.labelMedium) }
-                TextButton(onClick = { clipboard.setText(AnnotatedString(block.text)); copied = true }) {
-                    Text(if (copied) "已复制" else "复制", style = MaterialTheme.typography.labelMedium)
+                UiTextButton(onClick = { animateResize = true; wrap = !wrap }) { Text(if (wrap) "不换行" else "换行", style = MaterialTheme.typography.labelMedium) }
+                UiTextButton(onClick = { clipboard.setText(AnnotatedString(block.text)); copied = true }) {
+                    androidx.compose.animation.Crossfade(copied, label = "copy code") {
+                        Text(if (it) "已复制" else "复制", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
-            val scrollModifier = if (wrap) Modifier else Modifier.horizontalScroll(rememberScrollState())
-            Box(Modifier.fillMaxWidth().then(scrollModifier).padding(14.dp)) {
+            val horizontal = rememberScrollState()
+            val scrollModifier = if (wrap) Modifier else Modifier.horizontalScroll(horizontal)
+            Box(Modifier.fillMaxWidth().animateContentSize(if (animateResize) tween(240) else snap()).then(scrollModifier).padding(14.dp)) {
                 Text(block.text, fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 21.sp,
                     softWrap = wrap, color = MaterialTheme.colorScheme.onSurface)
             }

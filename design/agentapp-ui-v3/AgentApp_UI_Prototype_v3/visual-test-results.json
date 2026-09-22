@@ -1,0 +1,948 @@
+{
+  "renders": [
+    {
+      "file": "01-home-light.png",
+      "screen": "home",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "02-chat-light.png",
+      "screen": "chat",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "03-running-light.png",
+      "screen": "running",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "04-history-light.png",
+      "screen": "history",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "05-session-light.png",
+      "screen": "session",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "06-child-light.png",
+      "screen": "child",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "07-plan-light.png",
+      "screen": "plan",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "08-agents-light.png",
+      "screen": "agents",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "09-agent-edit-light.png",
+      "screen": "agent-edit",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "10-files-light.png",
+      "screen": "files",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "11-file-view-light.png",
+      "screen": "file-view",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "12-skills-light.png",
+      "screen": "skills",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "13-skill-edit-light.png",
+      "screen": "skill-edit",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "14-memory-light.png",
+      "screen": "memory",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "15-memory-edit-light.png",
+      "screen": "memory-edit",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "16-providers-light.png",
+      "screen": "providers",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "17-provider-edit-light.png",
+      "screen": "provider-edit",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "18-settings-light.png",
+      "screen": "settings",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "19-backup-light.png",
+      "screen": "backup",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "20-commands-light.png",
+      "screen": "commands",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "21-onboarding-light.png",
+      "screen": "onboarding",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "22-error-light.png",
+      "screen": "error",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "23-empty-light.png",
+      "screen": "empty",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "24-styles-light.png",
+      "screen": "styles",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "25-markdown-light.png",
+      "screen": "markdown",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "26-tool-lab-light.png",
+      "screen": "tool-lab",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-command-light.png",
+      "screen": "tool-lab",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-diff-light.png",
+      "screen": "tool-lab",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-diff-wrap-light.png",
+      "screen": "tool-lab",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-pending-light.png",
+      "screen": "tool-lab",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-failed-light.png",
+      "screen": "tool-lab",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-empty-light.png",
+      "screen": "tool-lab",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-cancelled-light.png",
+      "screen": "tool-lab",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-nodiff-light.png",
+      "screen": "tool-lab",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "panel-model-light.png",
+      "screen": "chat",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "panel-reasoning-quick-light.png",
+      "screen": "chat",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "panel-reasoning-light.png",
+      "screen": "chat",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "panel-context-light.png",
+      "screen": "chat",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "panel-permissions-light.png",
+      "screen": "chat",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "panel-approval-light.png",
+      "screen": "chat",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "providers-multiselect-light.png",
+      "screen": "providers",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "banner-top-light.png",
+      "screen": "chat",
+      "theme": "light",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "01-home-dark.png",
+      "screen": "home",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "02-chat-dark.png",
+      "screen": "chat",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "03-running-dark.png",
+      "screen": "running",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "04-history-dark.png",
+      "screen": "history",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "05-session-dark.png",
+      "screen": "session",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "06-child-dark.png",
+      "screen": "child",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "07-plan-dark.png",
+      "screen": "plan",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "08-agents-dark.png",
+      "screen": "agents",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "09-agent-edit-dark.png",
+      "screen": "agent-edit",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "10-files-dark.png",
+      "screen": "files",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "11-file-view-dark.png",
+      "screen": "file-view",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "12-skills-dark.png",
+      "screen": "skills",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "13-skill-edit-dark.png",
+      "screen": "skill-edit",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "14-memory-dark.png",
+      "screen": "memory",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "15-memory-edit-dark.png",
+      "screen": "memory-edit",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "16-providers-dark.png",
+      "screen": "providers",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "17-provider-edit-dark.png",
+      "screen": "provider-edit",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "18-settings-dark.png",
+      "screen": "settings",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "19-backup-dark.png",
+      "screen": "backup",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "20-commands-dark.png",
+      "screen": "commands",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "21-onboarding-dark.png",
+      "screen": "onboarding",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "22-error-dark.png",
+      "screen": "error",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "23-empty-dark.png",
+      "screen": "empty",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "24-styles-dark.png",
+      "screen": "styles",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "25-markdown-dark.png",
+      "screen": "markdown",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "26-tool-lab-dark.png",
+      "screen": "tool-lab",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-command-dark.png",
+      "screen": "tool-lab",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-diff-dark.png",
+      "screen": "tool-lab",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-diff-wrap-dark.png",
+      "screen": "tool-lab",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-pending-dark.png",
+      "screen": "tool-lab",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-failed-dark.png",
+      "screen": "tool-lab",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-empty-dark.png",
+      "screen": "tool-lab",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-cancelled-dark.png",
+      "screen": "tool-lab",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "tool-nodiff-dark.png",
+      "screen": "tool-lab",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "panel-model-dark.png",
+      "screen": "chat",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "panel-reasoning-quick-dark.png",
+      "screen": "chat",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "panel-reasoning-dark.png",
+      "screen": "chat",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "panel-context-dark.png",
+      "screen": "chat",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "panel-permissions-dark.png",
+      "screen": "chat",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "panel-approval-dark.png",
+      "screen": "chat",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "providers-multiselect-dark.png",
+      "screen": "providers",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "banner-top-dark.png",
+      "screen": "chat",
+      "theme": "dark",
+      "width": 412,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "360-home.png",
+      "screen": "home",
+      "theme": "dark",
+      "width": 360,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "360-chat.png",
+      "screen": "chat",
+      "theme": "dark",
+      "width": 360,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "360-providers.png",
+      "screen": "providers",
+      "theme": "dark",
+      "width": 360,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "360-tool-lab.png",
+      "screen": "tool-lab",
+      "theme": "dark",
+      "width": 360,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "360-markdown.png",
+      "screen": "markdown",
+      "theme": "dark",
+      "width": 360,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "360-tool-command.png",
+      "screen": "tool-lab",
+      "theme": "dark",
+      "width": 360,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "360-tool-edit.png",
+      "screen": "tool-lab",
+      "theme": "dark",
+      "width": 360,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "360-model.png",
+      "screen": "chat",
+      "theme": "dark",
+      "width": 360,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "360-reasoning-quick.png",
+      "screen": "chat",
+      "theme": "dark",
+      "width": 360,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    },
+    {
+      "file": "360-context.png",
+      "screen": "chat",
+      "theme": "dark",
+      "width": 360,
+      "horizontalOverflow": {
+        "phone": 0,
+        "content": 0
+      }
+    }
+  ],
+  "errors": [],
+  "limitations": [
+    "Desktop Chromium render, not Android Compose or TalkBack/IME verification."
+  ]
+}

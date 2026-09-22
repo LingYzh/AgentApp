@@ -1,5 +1,8 @@
 package com.example.myapplication.ui.memory
 
+import com.example.myapplication.ui.components.UiScaffold
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,7 +34,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -207,7 +210,7 @@ fun MemoryContent(
     var editTarget by remember { mutableStateOf<Pair<String?, Boolean>?>(null) } // (id?, open)
     val selection = rememberListSelection(memories.map { it.id }, memories.associate { it.id to it.title })
 
-    Scaffold(
+    UiScaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
@@ -221,7 +224,7 @@ fun MemoryContent(
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                 ),
                 actions = {
-                    TextButton(
+                    UiTextButton(
                         onClick = {
                             if (selection.active) selection.onExit() else selection.onEnter()
                         },
@@ -233,7 +236,7 @@ fun MemoryContent(
             )
         },
         bottomBar = {
-            if (selection.active) {
+            androidx.compose.animation.AnimatedVisibility(selection.active) {
                 ListSelectionBar(
                     selection = selection,
                     busy = busy,
@@ -293,6 +296,8 @@ fun MemoryContent(
     editTarget?.takeIf { it.second }?.let { (id, _) ->
         var title by remember(id) { mutableStateOf(id?.let { eid -> memories.firstOrNull { it.id == eid }?.title } ?: "") }
         var content by remember(id) { mutableStateOf(id?.let { memoryContentProvider(it) } ?: "") }
+        var preview by remember(id) { mutableStateOf(false) }
+        val previewScroll = androidx.compose.foundation.rememberScrollState()
         AlertDialog(
             onDismissRequest = { editTarget = null },
             title = { Text(if (id == null) "添加记忆" else "编辑记忆") },
@@ -302,20 +307,23 @@ fun MemoryContent(
                         title, { title = it }, Modifier.fillMaxWidth(),
                         label = { Text("标题") }, singleLine = true
                     )
-                    OutlinedTextField(
-                        content, { content = it }, Modifier.fillMaxWidth(),
-                        label = { Text("内容") }, minLines = 4, maxLines = 8
-                    )
+                    UiTextButton(onClick = { preview = !preview }) { Text(if (preview) "编辑源码" else "预览 Markdown") }
+                    androidx.compose.animation.Crossfade(preview, label = "memory preview") { reading ->
+                        if (reading) com.example.myapplication.ui.components.MarkdownContent(content,
+                            Modifier.fillMaxWidth().heightIn(max = 300.dp).verticalScroll(previewScroll))
+                        else OutlinedTextField(content, { content = it }, Modifier.fillMaxWidth(),
+                            label = { Text("内容") }, minLines = 4, maxLines = 8)
+                    }
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
+                UiTextButton(onClick = {
                     if (title.isNotBlank()) onSaveMemory(id, title.trim(), content)
                     editTarget = null
                 }) { Text("保存") }
             },
             dismissButton = {
-                TextButton(onClick = { editTarget = null }) { Text("取消") }
+                UiTextButton(onClick = { editTarget = null }) { Text("取消") }
             }
         )
     }

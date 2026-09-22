@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -79,17 +79,17 @@ fun ListSelectionBar(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("已选 ${selection.selectedIds.size} 项")
-                TextButton(onClick = selection.onToggleAll, enabled = !busy) {
+                UiTextButton(onClick = selection.onToggleAll, enabled = !busy) {
                     Text(if (selection.allSelected) "取消全选" else "全选")
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                onImport?.let { TextButton(onClick = it, enabled = !busy) { Text("导入") } }
+                onImport?.let { UiTextButton(onClick = it, enabled = !busy) { Text("导入") } }
                 onExport?.let { action ->
-                    TextButton(onClick = { action(selection.selectedIds) },
+                    UiTextButton(onClick = { action(selection.selectedIds) },
                         enabled = !busy && selection.selectedIds.isNotEmpty()) { Text("导出已选") }
                 }
-                TextButton(onClick = {
+                UiTextButton(onClick = {
                     deleteIds = ArrayList(selection.selectedIds)
                     deleteNames = ArrayList(selection.selectedIds.map(selection.labelForId))
                 },
@@ -110,9 +110,9 @@ fun ListSelectionBar(
                             .verticalScroll(rememberScrollState()))
                 }
             },
-            dismissButton = { TextButton(onClick = { deleteIds = arrayListOf() }) { Text("取消") } },
+            dismissButton = { UiTextButton(onClick = { deleteIds = arrayListOf() }) { Text("取消") } },
             confirmButton = {
-                TextButton(enabled = !busy, onClick = {
+                UiTextButton(enabled = !busy, onClick = {
                     val snapshot = deleteIds.toSet().intersect(selection.selectedIds)
                     deleteIds = arrayListOf()
                     if (snapshot.isNotEmpty()) onDelete(snapshot)

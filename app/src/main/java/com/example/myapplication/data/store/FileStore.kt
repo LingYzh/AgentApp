@@ -33,6 +33,7 @@ class FileStore(private val root: File) {
 
     val configFile = File(root, "config.json")
     val conversationsDir = File(root, "conversations")
+    val draftReceiptsDir = File(root, "draft-receipts")
     val memoryDir = File(root, "memory")
     val skillsDir = File(root, "skills")
     val workspaceDir = File(root, "workspace")
@@ -210,7 +211,31 @@ class FileStore(private val root: File) {
     /** 与详情轮询共用锁，避免读取正在写入的 JSON。 */
     @Synchronized
     fun saveConversation(c: Conversation) {
-        conversationFile(c.id).writeText(json.encodeToString(c))
+        writeManagedFile(conversationFile(c.id), json.encodeToString(c))
+    }
+
+    /** A receipt reserves an ID before commit; opening a draft never creates history. */
+    @Synchronized
+    fun commitDraft(key: String, candidate: Conversation): Conversation {
+        require(key.matches(Regex("[A-Za-z0-9-]+")))
+        require(candidate.messages.firstOrNull()?.role == "user")
+        draftReceiptsDir.mkdirs()
+        val directory = managedStoreRoot(draftReceiptsDir, "草稿回执")
+        val receipt = managedChild(directory, key, "草稿回执")
+        val id = if (receipt.exists()) receipt.readText() else UUID.randomUUID().toString().also {
+            writeManagedFile(receipt, it)
+        }
+        loadConversation(id)?.let { return it }
+        return candidate.copy(id = id).also(::saveConversation)
+    }
+
+    @Synchronized
+    fun committedDraft(key: String): Conversation? {
+        require(key.matches(Regex("[A-Za-z0-9-]+")))
+        if (!draftReceiptsDir.exists()) return null
+        val directory = managedStoreRoot(draftReceiptsDir, "草稿回执")
+        val receipt = managedChild(directory, key, "草稿回执")
+        return if (receipt.exists()) loadConversation(receipt.readText()) else null
     }
 
     @Synchronized

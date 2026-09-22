@@ -21,7 +21,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -189,6 +189,7 @@ fun ConfigurationTransferHost(
         exportOptionsVisible = true
     }
 
+    androidx.compose.runtime.CompositionLocalProvider(com.example.myapplication.ui.components.LocalTransferFeedback provides snackbarHostState) {
     Box(Modifier.fillMaxSize()) {
         content(
             ConfigurationTransferActions(
@@ -200,18 +201,14 @@ fun ConfigurationTransferHost(
             )
         )
 
-        SnackbarHost(
-            hostState = snackbarHostState,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 16.dp, vertical = 16.dp)
-        )
 
         if (busy && !exportPickerActive && !importPickerActive) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
         }
+    }
+
     }
 
     if (exportOptionsVisible) {
@@ -322,10 +319,10 @@ private fun ExportOptionsDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            UiTextButton(onClick = onDismiss) { Text("取消") }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm) { Text("选择保存位置") }
+            UiTextButton(onClick = onConfirm) { Text("选择保存位置") }
         }
     )
 }
@@ -416,10 +413,10 @@ private fun ImportSummaryDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            UiTextButton(onClick = onDismiss) { Text("取消") }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm) { Text("导入") }
+            UiTextButton(onClick = onConfirm) { Text("导入") }
         }
     )
 }

@@ -1,5 +1,6 @@
 package com.example.myapplication.ui.chat
 
+import com.example.myapplication.ui.components.UiScaffold
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,7 +35,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -49,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -80,7 +82,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-class ConversationsViewModel(private val app: AgentApp) : ViewModel() {
+class ConversationsViewModel(
+    private val app: AgentApp,
+    private val beforeDelete: suspend (Set<String>) -> Unit = {}
+) : ViewModel() {
     private val _conversations = MutableStateFlow<List<Conversation>>(emptyList())
     val conversations = _conversations.asStateFlow()
 
@@ -104,17 +109,9 @@ class ConversationsViewModel(private val app: AgentApp) : ViewModel() {
         }
     }
 
-    fun create(agentId: String?, onCreated: (Conversation) -> Unit) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val c = Conversation(agentId = agentId)
-            app.store.saveConversation(c)
-            refreshData()
-            withContext(Dispatchers.Main) { onCreated(c) }
-        }
-    }
-
     fun delete(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            beforeDelete(setOf(id))
             app.store.deleteConversation(id)
             refreshData()
         }
@@ -140,6 +137,7 @@ class ConversationsViewModel(private val app: AgentApp) : ViewModel() {
             try {
                 var failure: Exception? = null
                 try {
+                    beforeDelete(selectedIds)
                     selectedIds.forEach { app.store.deleteConversation(it) }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -177,8 +175,12 @@ class ConversationsViewModel(private val app: AgentApp) : ViewModel() {
 @Composable
 fun ConversationsScreen(navController: NavHostController, openDrawer: () -> Unit) {
     val app = LocalContext.current.applicationContext as AgentApp
+    val activity = LocalContext.current as androidx.activity.ComponentActivity
+    val sessions: ChatSessions = viewModel(viewModelStoreOwner = activity, factory = viewModelFactory {
+        initializer { ChatSessions(createSavedStateHandle()) }
+    })
     val vm: ConversationsViewModel = viewModel(factory = viewModelFactory {
-        initializer { ConversationsViewModel(app) }
+        initializer { ConversationsViewModel(app, sessions::stopForDeletion) }
     })
     LifecycleStartEffect(Unit) {
         vm.refresh()
@@ -208,7 +210,7 @@ fun ConversationsScreen(navController: NavHostController, openDrawer: () -> Unit
             onOpenDrawer = openDrawer,
             onSelectConversation = { navController.safeNavigateDirect(Routes.chat(it)) },
             onCreateConversation = { agentId ->
-                vm.create(agentId) { navController.safeNavigateDirect(Routes.chat(it.id)) }
+                navController.safeNavigateDirect(Routes.newChat(agentId))
             },
             onRenameConversation = { id, title -> vm.rename(id, title) },
             onDeleteConversation = { vm.delete(it) },
@@ -246,7 +248,7 @@ fun ConversationsContent(
     var showAgentPicker by remember { mutableStateOf(false) }
     val selection = rememberListSelection(conversations.map { it.id }, conversations.associate { it.id to it.title })
 
-    Scaffold(
+    UiScaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
@@ -260,7 +262,7 @@ fun ConversationsContent(
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                 ),
                 actions = {
-                    TextButton(
+                    UiTextButton(
                         onClick = {
                             if (selection.active) selection.onExit() else selection.onEnter()
                         },
@@ -272,7 +274,7 @@ fun ConversationsContent(
             )
         },
         bottomBar = {
-            if (selection.active) {
+            androidx.compose.animation.AnimatedVisibility(selection.active) {
                 ListSelectionBar(
                     selection = selection,
                     busy = busy,
@@ -357,9 +359,9 @@ fun ConversationsContent(
             onDismissRequest = { deleteTarget = null },
             title = { Text("删除会话？") },
             text = { Text("将删除「${target.title}」及其子代理记录。工作区文件保留。") },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } },
+            dismissButton = { UiTextButton(onClick = { deleteTarget = null }) { Text("取消") } },
             confirmButton = {
-                TextButton(onClick = {
+                UiTextButton(onClick = {
                     deleteTarget = null
                     onDeleteConversation(target.id)
                 }, enabled = !busy) { Text("删除") }
@@ -397,7 +399,7 @@ fun ConversationsContent(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showAgentPicker = false }) { Text("取消") }
+                UiTextButton(onClick = { showAgentPicker = false }) { Text("取消") }
             }
         )
     }
@@ -411,13 +413,13 @@ fun ConversationsContent(
                 OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true)
             },
             confirmButton = {
-                TextButton(onClick = {
+                UiTextButton(onClick = {
                     onRenameConversation(target.id, text)
                     renameTarget = null
                 }) { Text("保存") }
             },
             dismissButton = {
-                TextButton(onClick = { renameTarget = null }) { Text("取消") }
+                UiTextButton(onClick = { renameTarget = null }) { Text("取消") }
             }
         )
     }

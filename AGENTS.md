@@ -28,7 +28,7 @@
 - `data/model/`：可序列化配置、会话、消息、Agent、记忆模型。
 - `data/store/FileStore.kt`：应用私有目录内 JSON、Markdown、工作区文件与技能包。
 - `ui/`：会话、聊天、模型配置、Agent、技能、记忆、文件与设置页面。
-- `data/backup/`：ZIP 备份与恢复。
+- `data/backup/`：ZIP 备份与恢复。完整备份包含 avatars，归档使用相对头像引用，恢复前暂存校验并自动备份原数据；缺图保留 emoji，不借用本机旧图。
 - `data/backup/ConfigurationTransfer.kt`：Provider、会话、记忆 JSON 与 Agent ZIP 独立迁移；先 prepareImport 校验/预览，再按用户选择处理冲突。
 - `ui/components/ListSelection.kt`：六类列表共用的管理模式、checkbox 多选、全选与批量删除确认。
 
@@ -38,7 +38,9 @@
 - 工具定义集中于 `Tools`，执行入口为 `ToolExecutor`；AgentProfile 的空工具列表表示全部工具可用。
 - 子代理禁止再次委派；模型选择优先级为设置页强制配置、工具参数、继承主代理。
 - 工作区文件操作须保留 FileStore 的路径边界校验。
-- 当前聊天任务运行在 ChatViewModel 的 viewModelScope；尚无独立后台任务服务。
+- 冷入口为 NEW_CHAT 草稿，历史入口保留；首次有效发送通过 FileStore.commitDraft 回执保存会话和首条消息，不创建空历史。
+- ChatSessions 在 Activity 的 ViewModel 内持有 ChatViewModel；草稿到 CHAT 交接复用同一 viewModelScope。Activity 最终销毁会取消任务，尚无独立后台任务服务。
+- 草稿/输入/附件引用通过 SavedStateHandle 恢复；旋转、外部选择器和后台返回不重置导航。工具详情只使用对应调用记录与已保存快照，不重读文件冒充历史。
 - 取消必须贯穿网络读取、工具和子代理；不得将 CancellationException 转为普通工具错误。
 - 导航列表在 STARTED 阶段刷新，避免等待入场动画结束后才加载；圆角卡片使用 Card 自身的 onClick 处理 ripple。
 - 当前没有无障碍服务、截图、通知监听、Shizuku 或 root 执行实现。

@@ -35,7 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -244,7 +244,7 @@ internal fun AttachmentPreviewDialog(
                     ) {
                         Text("用其他应用打开")
                     }
-                    TextButton(onClick = onDismiss) { Text("关闭") }
+                    UiTextButton(onClick = onDismiss) { Text("关闭") }
                 }
             }
         }

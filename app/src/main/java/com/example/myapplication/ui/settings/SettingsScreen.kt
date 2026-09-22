@@ -1,5 +1,6 @@
 package com.example.myapplication.ui.settings
 
+import com.example.myapplication.ui.components.UiScaffold
 import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -40,7 +41,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -162,8 +163,9 @@ class SettingsViewModel(val app: AgentApp) : ViewModel() {
 
     fun import(uri: android.net.Uri) {
         runIo("导入") {
-            val count = app.backupManager.importFrom(uri)
-            "✅ 已导入 $count 个文件（原数据已自动备份到 backups/）"
+            val result = app.backupManager.importFrom(uri)
+            "已导入 ${result.fileCount} 个文件（原数据含头像已自动备份到 backups/）" +
+                if (result.missingAvatars > 0) "\n${result.missingAvatars} 个 Agent 的图片未包含在备份中，已使用默认头像。" else ""
         }
     }
 
@@ -267,13 +269,13 @@ fun SettingsScreen(openDrawer: () -> Unit) {
             title = { Text("确认导入？") },
             text = { Text("导入会覆盖当前全部数据（模型配置、Agents、对话、记忆、Skills、工作区文件）。当前数据会先自动备份到应用内 backups/ 目录。") },
             confirmButton = {
-                TextButton(onClick = {
+                UiTextButton(onClick = {
                     vm.import(uri)
                     showImportConfirm = null
                 }) { Text("导入") }
             },
             dismissButton = {
-                TextButton(onClick = { showImportConfirm = null }) { Text("取消") }
+                UiTextButton(onClick = { showImportConfirm = null }) { Text("取消") }
             }
         )
     }
@@ -314,7 +316,7 @@ fun SettingsContent(
         listOf(subProvider.model).filter { it.isNotBlank() }
     } ?: emptyList()
 
-    Scaffold(
+    UiScaffold(
         topBar = {
             TopAppBar(
                 title = { Text("设置 / 备份") },
@@ -652,7 +654,7 @@ private fun AutoApprovedCommandsCard(
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
+                UiTextButton(onClick = {
                     if (onAddCommand(command)) {
                         commandText = ""
                         commandError = null
@@ -665,7 +667,7 @@ private fun AutoApprovedCommandsCard(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { pendingConfirmationCommand = null }) {
+                UiTextButton(onClick = { pendingConfirmationCommand = null }) {
                     Text("取消")
                 }
             }

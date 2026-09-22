@@ -22,7 +22,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.example.myapplication.ui.components.UiTextButton
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -54,18 +55,19 @@ internal fun FileDiffStats(
     modifier: Modifier = Modifier,
     textStyle: TextStyle = MaterialTheme.typography.labelSmall
 ) {
+    if (result.usedFallback || result.previewOmitted) return
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = "新增 +${result.addedCount}",
+            text = "+${result.addedCount}",
             color = DiffAddedColor,
             style = textStyle
         )
         Text(
-            text = "删除 -${result.removedCount}",
+            text = "−${result.removedCount}",
             color = MaterialTheme.colorScheme.error,
             style = textStyle
         )
@@ -93,7 +95,7 @@ fun FileDiffDialog(change: FileChange, onDismiss: () -> Unit) {
                         style = MaterialTheme.typography.titleLarge,
                         modifier = Modifier.weight(1f)
                     )
-                    TextButton(onClick = onDismiss) { Text("关闭") }
+                    UiTextButton(onClick = onDismiss) { Text("关闭") }
                 }
                 Text(
                     text = change.path,
@@ -113,55 +115,10 @@ fun FileDiffContent(
     change: FileChange,
     modifier: Modifier = Modifier
 ) {
-    val result = remember(change) { FileChanges.diff(change) }
-    val clipboard = LocalClipboardManager.current
-    val copyText = remember(result) { resultToText(result) }
-
-    Column(modifier = modifier) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            FileDiffStats(result, textStyle = MaterialTheme.typography.labelLarge)
-            if (!change.beforeExists) {
-                Text("新文件", style = MaterialTheme.typography.labelMedium)
-            }
-            Text("工具修改记录", style = MaterialTheme.typography.labelMedium)
-            TextButton(onClick = { clipboard.setText(AnnotatedString(copyText)) }) {
-                Text("复制")
-            }
-        }
-
-        if (result.previewOmitted) {
-            Text(
-                text = "文件较大，此处仅展示部分修改快照。可从工作区导出完整文件。",
-                color = MaterialTheme.colorScheme.tertiary,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(vertical = 4.dp)
-            )
-        }
-        result.fallbackReason?.let { reason ->
-            Text(
-                text = reason,
-                color = MaterialTheme.colorScheme.tertiary,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(vertical = 4.dp)
-            )
-        }
-        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
-
-        if (result.lines.isNotEmpty()) {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(1.dp)
-            ) {
-                items(result.lines) { line -> DiffLineRow(line) }
-            }
-        } else {
-            FallbackBlocks(result, Modifier.fillMaxWidth().weight(1f))
-        }
+    val result by androidx.compose.runtime.produceState<FileDiffResult?>(null, change) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { FileChanges.diff(change) }
     }
+    Column(modifier.verticalScroll(rememberScrollState())) { InlineFileDiff(change, result) }
 }
 
 /**
@@ -201,7 +158,7 @@ fun FileDiffPreview(
                         )
                     }
                 }
-                TextButton(
+                UiTextButton(
                     onClick = onOpenFull,
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(6.dp)
                 ) {

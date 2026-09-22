@@ -1,5 +1,6 @@
 package com.example.myapplication.ui.files
 
+import com.example.myapplication.ui.components.UiScaffold
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -46,7 +47,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -277,10 +278,10 @@ fun FilesScreen(navController: NavHostController, openDrawer: () -> Unit) {
                 }
             },
             dismissButton = {
-                TextButton(onClick = { exportConfirmPaths = arrayListOf() }) { Text("取消") }
+                UiTextButton(onClick = { exportConfirmPaths = arrayListOf() }) { Text("取消") }
             },
             confirmButton = {
-                TextButton(enabled = !busy, onClick = {
+                UiTextButton(enabled = !busy, onClick = {
                     exportConfirmPaths = arrayListOf()
                     exportPaths = snapshot
                     exportPickerActive = true
@@ -308,7 +309,7 @@ fun FilesContent(
     busy: Boolean = false
 ) {
     val selection = rememberListSelection(files.map { it.first })
-    Scaffold(
+    UiScaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
@@ -325,7 +326,7 @@ fun FilesContent(
                     }
                 },
                 actions = {
-                    TextButton(
+                    UiTextButton(
                         onClick = if (selection.active) selection.onExit else selection.onEnter,
                         enabled = !busy
                     ) {
@@ -340,7 +341,7 @@ fun FilesContent(
             )
         },
         bottomBar = {
-            if (selection.active) {
+            androidx.compose.animation.AnimatedVisibility(selection.active) {
                 ListSelectionBar(
                     selection = selection,
                     busy = busy,
@@ -389,7 +390,7 @@ fun FilesContent(
                                 if (selection.active) selection.onToggle(path) else onSelectFile(path)
                             }
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.animateItem().fillMaxWidth()
                     ) {
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -523,13 +524,17 @@ fun FileViewContent(
 ) {
     var editing by remember { mutableStateOf(initialEditing) }
     var editBuffer by remember(content) { mutableStateOf(content ?: "") }
-    var selectedTab by remember(path, recentChange != null) { mutableStateOf(0) }
+    var selectedTab by androidx.compose.runtime.saveable.rememberSaveable(path) { mutableStateOf(0) }
+    var source by androidx.compose.runtime.saveable.rememberSaveable(path) { mutableStateOf(false) }
+    val markdown = path.endsWith(".md", true) || path.endsWith(".markdown", true)
+    val readingScroll = rememberScrollState()
+    val sourceScroll = rememberScrollState()
 
     LaunchedEffect(recentChange) {
         if (recentChange == null) selectedTab = 0
     }
 
-    Scaffold(
+    UiScaffold(
         topBar = {
             TopAppBar(
                 title = { Text(path, maxLines = 1) },
@@ -581,8 +586,11 @@ fun FileViewContent(
                     )
                 }
             }
-            Box(Modifier.fillMaxSize()) {
-                if (recentChange != null && selectedTab == 1) {
+            if (markdown && !editing && selectedTab == 0) {
+                com.example.myapplication.ui.components.UiTextButton(onClick = { source = !source }) { Text(if (source) "阅读 Markdown" else "查看源码") }
+            }
+            androidx.compose.animation.Crossfade(selectedTab to source, label = "file tab", modifier = Modifier.fillMaxSize()) { (tab, raw) ->
+                if (recentChange != null && tab == 1) {
                     FileDiffContent(
                         change = recentChange,
                         modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp)
@@ -617,12 +625,16 @@ fun FileViewContent(
                                 .padding(8.dp),
                             textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
                         )
+                        content != null && markdown && !raw -> {
+                            com.example.myapplication.ui.components.MarkdownContent(content,
+                                Modifier.fillMaxSize().verticalScroll(readingScroll).padding(22.dp))
+                        }
                         content != null -> SelectionContainer {
                             Text(
                                 content,
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .verticalScroll(rememberScrollState())
+                                    .verticalScroll(sourceScroll)
                                     .padding(16.dp)
                                     .padding(bottom = 24.dp),
                                 style = MaterialTheme.typography.bodySmall,

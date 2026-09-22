@@ -229,7 +229,10 @@ class PermissionSession(
     private fun isPermissionMetadata(file: File): Boolean {
         val canonical = file.canonicalFile
         val conversations = store.conversationsDir.canonicalFile
+        val draftReceipts = store.draftReceiptsDir.canonicalFile
         return canonical == store.configFile.canonicalFile ||
+            canonical == draftReceipts ||
+            canonical.path.startsWith(draftReceipts.path.trimEnd(File.separatorChar) + File.separator) ||
             canonical.path.startsWith(conversations.path.trimEnd(File.separatorChar) + File.separator)
     }
 }

@@ -1,0 +1,128 @@
+{
+  "checks": [
+    {
+      "test": "All 26 routes render and have a top bar",
+      "pass": true
+    },
+    {
+      "test": "Dark filled actions and send icon use white foreground",
+      "pass": true
+    },
+    {
+      "test": "Model picker shows per-model native capability icons and search",
+      "pass": true
+    },
+    {
+      "test": "Context known capacity segments sum to 17.14%, not 100%",
+      "pass": true
+    },
+    {
+      "test": "Context unknown capacity shows composition, no fake utilization",
+      "pass": true
+    },
+    {
+      "test": "Compacted context adds summary segment and sums to 6.2%",
+      "pass": true
+    },
+    {
+      "test": "Slider keyboard steps, explicit none, and reset follow remain distinct",
+      "pass": true
+    },
+    {
+      "test": "Dragging previews without committing until change",
+      "pass": true
+    },
+    {
+      "test": "Slider title opens detailed canonical + protocol values",
+      "pass": true
+    },
+    {
+      "test": "Unsupported effort resets when switching protocol; options follow support",
+      "pass": true
+    },
+    {
+      "test": "Unknown model default does not display none as selected",
+      "pass": true
+    },
+    {
+      "test": "Radio global default vs independent multi-select checkboxes",
+      "pass": true
+    },
+    {
+      "test": "One clear provider edit target preserves edit workflow",
+      "pass": true
+    },
+    {
+      "test": "Feedback occupies top layout and never covers bottom composer",
+      "pass": true
+    },
+    {
+      "test": "Feedback moves inside active panel, not underneath scrim",
+      "pass": true
+    },
+    {
+      "test": "Tool arguments/results expand inline and survive rerender",
+      "pass": true
+    },
+    {
+      "test": "Pending tool does not fabricate a completed result",
+      "pass": true
+    },
+    {
+      "test": "Markdown sample covers headings, quote, nested/task lists, highlighted code and table",
+      "pass": true
+    },
+    {
+      "test": "Code wrap toggles locally without rerendering the page",
+      "pass": true
+    },
+    {
+      "test": "Code copy sends original text, never highlighted HTML (clipboard mocked)",
+      "pass": true
+    },
+    {
+      "test": "Prototype Markdown escapes raw HTML and rejects unsafe link schemes",
+      "pass": true
+    },
+    {
+      "test": "Markdown source view matches raw sample exactly",
+      "pass": true
+    },
+    {
+      "test": "Stream demo progresses without replaying block/page animations",
+      "pass": true
+    },
+    {
+      "test": "Navigation and popup enter/exit animate and clean inert snapshots",
+      "pass": true
+    },
+    {
+      "test": "prefers-reduced-motion disables route/popup animations",
+      "pass": true
+    },
+    {
+      "test": "Existing send → tool approval → completed flow remains intact",
+      "pass": true
+    },
+    {
+      "test": "Auto still requires second confirmation",
+      "pass": true
+    },
+    {
+      "test": "Cancelled compaction does not commit context changes",
+      "pass": true
+    },
+    {
+      "test": "Read-only child and explicit stop still work",
+      "pass": true
+    },
+    {
+      "test": "Pending attachment addition/removal still work",
+      "pass": true
+    }
+  ],
+  "errors": [],
+  "requests": [],
+  "environment": "Playwright + system Chromium; standalone HTML; synthetic fixtures, no API/device calls",
+  "browser": "144.0.7559.96"
+}

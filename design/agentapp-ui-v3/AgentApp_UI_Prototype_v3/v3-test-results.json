@@ -1,0 +1,104 @@
+{
+  "checks": [
+    {
+      "test": "Cold entry is New conversation, no empty demo record is created",
+      "pass": true
+    },
+    {
+      "test": "Repeated New conversation without sending creates no history entries",
+      "pass": true
+    },
+    {
+      "test": "First send creates one record, duplicate send is locked, next new draft is independent",
+      "pass": true
+    },
+    {
+      "test": "History remains accessible from the navigation drawer",
+      "pass": true
+    },
+    {
+      "test": "Tool summaries are borderless rows; command has no command preview",
+      "pass": true
+    },
+    {
+      "test": "Command opens inline Shell containing the actual fixture command and its output",
+      "pass": true
+    },
+    {
+      "test": "File edit opens raw-line diff with correct additions/removals and line numbers",
+      "pass": true
+    },
+    {
+      "test": "Diff uses full conversation width with only local horizontal overflow",
+      "pass": true
+    },
+    {
+      "test": "Copy Diff copies the patch source, not HTML or line-number labels",
+      "pass": true
+    },
+    {
+      "test": "Empty command output is explicitly distinct from pending execution",
+      "pass": true
+    },
+    {
+      "test": "Pending/running/failed/cancelled records are not falsely marked completed",
+      "pass": true
+    },
+    {
+      "test": "Missing snapshot shows no fabricated diff or change count",
+      "pass": true
+    },
+    {
+      "test": "Theme rerender preserves tool node, expanded state and horizontal scroll",
+      "pass": true
+    },
+    {
+      "test": "Down-chevron label/icon centers align within one pixel in light and dark",
+      "pass": true
+    },
+    {
+      "test": "Provider default changes keep stable DOM nodes for smooth control transitions",
+      "pass": true
+    },
+    {
+      "test": "Non-navigation rerenders preserve text-field focus and edited value",
+      "pass": true
+    },
+    {
+      "test": "Inline expansion interpolates real layout height and collapses correctly",
+      "pass": true
+    },
+    {
+      "test": "Rapid expand/collapse reversals finish in the last requested state",
+      "pass": true
+    },
+    {
+      "test": "Popup-to-popup replacement animates the old surface out and cleans up",
+      "pass": true
+    },
+    {
+      "test": "Top banner reserves animated height on entry and releases it on exit",
+      "pass": true
+    },
+    {
+      "test": "Ordinary state changes have local transitions rather than page re-entry",
+      "pass": true
+    },
+    {
+      "test": "Width, button, send-state CSS transitions are configured",
+      "pass": true
+    },
+    {
+      "test": "Reduced-motion renders final states with no web animations",
+      "pass": true
+    },
+    {
+      "test": "Continuous Markdown token updates never reanimate page or content blocks",
+      "pass": true
+    }
+  ],
+  "errors": [],
+  "requests": [],
+  "environment": "Desktop Chromium with 360/412 CSS-pixel viewports. Script-injected standalone HTML (file:// blocked by environment policy). Not Android testing.",
+  "browser": "144.0.7559.96"
+}

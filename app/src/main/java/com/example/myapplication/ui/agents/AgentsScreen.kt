@@ -1,5 +1,6 @@
 package com.example.myapplication.ui.agents
 
+import com.example.myapplication.ui.components.UiScaffold
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -51,7 +52,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.ui.draw.clip
@@ -177,7 +178,7 @@ fun AgentsScreen(navController: NavHostController, openDrawer: () -> Unit) {
     deleteError?.let { message ->
         AlertDialog(onDismissRequest = vm::clearDeleteError,
             title = { Text("删除失败") }, text = { Text(message) },
-            confirmButton = { TextButton(onClick = vm::clearDeleteError) { Text("确定") } })
+            confirmButton = { UiTextButton(onClick = vm::clearDeleteError) { Text("确定") } })
     }
 
 
@@ -208,6 +209,7 @@ fun AgentsScreen(navController: NavHostController, openDrawer: () -> Unit) {
             onOpenDrawer = openDrawer,
             onNewAgent = { navController.safeNavigateDirect(Routes.agentEdit("new")) },
             onSelectAgent = { id -> navController.safeNavigateDirect(Routes.agentEdit(id)) },
+            onStartAgent = { id -> navController.safeNavigateDirect(Routes.newChat(id)) },
             onDeleteAgent = { id -> vm.delete(id) },
             onResetToDefaults = { vm.resetToDefaults() },
             onImport = actions.onImport,
@@ -235,11 +237,12 @@ fun AgentsContent(
     onImport: () -> Unit = {},
     onExportSelected: (Set<String>) -> Unit = {},
     onDeleteSelected: (Set<String>) -> Unit = {},
-    busy: Boolean = false
+    busy: Boolean = false,
+    onStartAgent: (String) -> Unit = {}
 ) {
     val selection = rememberListSelection(agents.map { it.id }, agents.associate { it.id to it.name })
 
-    Scaffold(
+    UiScaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Agents") },
@@ -247,7 +250,7 @@ fun AgentsContent(
                     IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "菜单") }
                 },
                 actions = {
-                    TextButton(onClick = if (selection.active) selection.onExit else selection.onEnter,
+                    UiTextButton(onClick = if (selection.active) selection.onExit else selection.onEnter,
                         enabled = !busy) { Text(if (selection.active) "完成" else "管理") }
                     if (!selection.active) {
                         IconButton(onClick = onResetToDefaults, enabled = !busy) {
@@ -263,8 +266,9 @@ fun AgentsContent(
             )
         },
         bottomBar = {
-            if (selection.active) ListSelectionBar(selection, busy, onDeleteSelected,
-                onImport = onImport, onExport = onExportSelected)
+            androidx.compose.animation.AnimatedVisibility(selection.active) {
+                ListSelectionBar(selection, busy, onDeleteSelected, onImport = onImport, onExport = onExportSelected)
+            }
         },
         floatingActionButton = {
             if (!selection.active) {
@@ -318,7 +322,7 @@ fun AgentsContent(
                         onClick = { if (!busy) {
                             if (selection.active) selection.onToggle(agent.id) else onSelectAgent(agent.id)
                         } },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.animateItem().fillMaxWidth()
                     ) {
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -351,6 +355,7 @@ fun AgentsContent(
                                 )
                             }
                             if (!selection.active) {
+                                UiTextButton(onClick = { onStartAgent(agent.id) }, enabled = !busy) { Text("对话") }
                                 IconButton(onClick = { onDeleteAgent(agent.id) }, enabled = !busy) {
                                     Icon(Icons.Filled.Delete, "删除")
                                 }
@@ -439,7 +444,7 @@ fun AgentEditContent(
         ?: "跟随全局选中"
     val modelOptions = selectedProvider?.models ?: emptyList()
 
-    Scaffold(
+    UiScaffold(
         topBar = {
             TopAppBar(
                 title = { Text(if (isNew) "新建 Agent" else "编辑 Agent") },
@@ -853,7 +858,7 @@ private fun AgentEmojiPickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            UiTextButton(onClick = onDismiss) { Text("取消") }
         }
     )
 }

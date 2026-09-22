@@ -1,5 +1,10 @@
 package com.example.myapplication.ui.theme
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.getValue
+import androidx.compose.material3.Typography
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -11,65 +16,65 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 /**
- * Anthropic 品牌风格：暖米白 + 陶土橙（浅）/ 暖炭黑 + 亮陶土（深）。
+ * AgentApp V3 语义配色；实心按钮始终白色前景，不使用壁纸动态色。
  */
 private val AnthropicLight = lightColorScheme(
-    primary = Color(0xFFD97757),            // Anthropic 标志性陶土橙
+    primary = Color(0xFFA34F36),
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFF7E7E0),   // 柔和淡陶土
-    onPrimaryContainer = Color(0xFF4D1F10),
-    secondary = Color(0xFF6A9BCC),          // Anthropic 官方次级蓝
+    primaryContainer = Color(0xFFF5E7DF),
+    onPrimaryContainer = Color(0xFFA34F36),
+    secondary = Color(0xFF6A9BCC),
     onSecondary = Color(0xFFFFFFFF),
     secondaryContainer = Color(0xFFE5EEF7),
     onSecondaryContainer = Color(0xFF1B3854),
-    tertiary = Color(0xFF788C5D),           // Anthropic 官方鼠尾草绿
+    tertiary = Color(0xFF788C5D),
     tertiaryContainer = Color(0xFFE7EEDF),
     onTertiaryContainer = Color(0xFF263717),
-    background = Color(0xFFFAF9F5),         // 官方 Ivory Cream 象牙暖米白
-    onBackground = Color(0xFF141413),       // 官方 Slate Ink 板岩墨黑
-    surface = Color(0xFFFAF9F5),
-    onSurface = Color(0xFF141413),
-    surfaceVariant = Color(0xFFE8E5DC),     // 官方 Warm Sand 暖沙气泡底色
-    onSurfaceVariant = Color(0xFF6B665D),
+    background = Color(0xFFFAF9F5),
+    onBackground = Color(0xFF141413),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF262624),
+    surfaceVariant = Color(0xFFE8E5DC),
+    onSurfaceVariant = Color(0xFF6B6860),
     surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFF4F2EA),// Claude 侧边栏与卡片微底色
-    surfaceContainer = Color(0xFFEEEBE2),
+    surfaceContainerLow = Color(0xFFF1EFE8),
+    surfaceContainer = Color(0xFFF1EFE8),
     surfaceContainerHigh = Color(0xFFE7E3D8),
     surfaceContainerHighest = Color(0xFFE0DBD0),
     outline = Color(0xFFCCC7B8),
-    outlineVariant = Color(0xFFE0DDD2),
-    error = Color(0xFFBA1A1A),
-    errorContainer = Color(0xFFFFDAD6),
+    outlineVariant = Color(0xFFE4E1D7),
+    error = Color(0xFFA33732),
+    errorContainer = Color(0xFFF7E7E4),
     onErrorContainer = Color(0xFF410002)
 )
 
 private val AnthropicDark = darkColorScheme(
-    primary = Color(0xFFE08A6D),            // 亮陶土珊瑚橙
-    onPrimary = Color(0xFF2B1107),
-    primaryContainer = Color(0xFF4F2617),
-    onPrimaryContainer = Color(0xFFFBE0D5),
-    secondary = Color(0xFF8BB5DF),          // 通透次级蓝
+    primary = Color(0xFFA9563D),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFF49392F),
+    onPrimaryContainer = Color(0xFFE6A086),
+    secondary = Color(0xFF8BB5DF),
     onSecondary = Color(0xFF142B40),
     secondaryContainer = Color(0xFF203B57),
     onSecondaryContainer = Color(0xFFD3E4F6),
-    tertiary = Color(0xFF9CB27F),           // 通透次级绿
+    tertiary = Color(0xFF9CB27F),
     tertiaryContainer = Color(0xFF334521),
     onTertiaryContainer = Color(0xFFE0EAD4),
-    background = Color(0xFF141413),         // 官方 Slate Ink 暗夜深邃黑
-    onBackground = Color(0xFFEDE8DF),       // 官方 Parchment 暖白字
-    surface = Color(0xFF141413),
-    onSurface = Color(0xFFEDE8DF),
-    surfaceVariant = Color(0xFF282622),     // 深暖沙色卡片
-    onSurfaceVariant = Color(0xFFA8A195),
+    background = Color(0xFF262624),
+    onBackground = Color(0xFFEDE8DF),
+    surface = Color(0xFF30302D),
+    onSurface = Color(0xFFF1F0E9),
+    surfaceVariant = Color(0xFF282622),
+    onSurfaceVariant = Color(0xFFB6B3AA),
     surfaceContainerLowest = Color(0xFF0F0F0E),
-    surfaceContainerLow = Color(0xFF1B1A18),// Claude Dark 侧边栏与卡片微底色
-    surfaceContainer = Color(0xFF22211E),
+    surfaceContainerLow = Color(0xFF30302D),
+    surfaceContainer = Color(0xFF353530),
     surfaceContainerHigh = Color(0xFF2B2925),
     surfaceContainerHighest = Color(0xFF35332E),
     outline = Color(0xFF4A463F),
-    outlineVariant = Color(0xFF33302A),
-    error = Color(0xFFFFB4AB),
-    errorContainer = Color(0xFF93000A),
+    outlineVariant = Color(0xFF46463F),
+    error = Color(0xFFECA29B),
+    errorContainer = Color(0xFF493431),
     onErrorContainer = Color(0xFFFFDAD6)
 )
 
@@ -92,7 +97,7 @@ object ExpressiveTokens {
     val HeaderCardShape = RoundedCornerShape(22.dp)
     val StatusBadgeShape = RoundedCornerShape(10.dp)
     val FabSafeBottomPadding = 88.dp
-    val ScreenHorizontalPadding = 12.dp
+    val ScreenHorizontalPadding = 22.dp
 }
 
 @Composable
@@ -105,9 +110,25 @@ fun AgentTheme(
         "dark" -> true
         else -> isSystemInDarkTheme()
     }
+    val target = if (dark) AnthropicDark else AnthropicLight
+    val background by animateColorAsState(target.background, tween(180), label = "background")
+    val surface by animateColorAsState(target.surface, tween(180), label = "surface")
+    val foreground by animateColorAsState(target.onSurface, tween(180), label = "foreground")
+    val primary by animateColorAsState(target.primary, tween(180), label = "action")
+    val outline by animateColorAsState(target.outlineVariant, tween(180), label = "outline")
     MaterialTheme(
-        colorScheme = if (dark) AnthropicDark else AnthropicLight,
+        colorScheme = target.copy(background = background, surface = surface, onSurface = foreground,
+            onBackground = foreground, primary = primary, outlineVariant = outline,
+            primaryContainer = animatedToken(target.primaryContainer), onPrimaryContainer = animatedToken(target.onPrimaryContainer),
+            surfaceContainer = animatedToken(target.surfaceContainer), surfaceContainerLow = animatedToken(target.surfaceContainerLow),
+            surfaceContainerHigh = animatedToken(target.surfaceContainerHigh), surfaceContainerHighest = animatedToken(target.surfaceContainerHighest),
+            surfaceVariant = animatedToken(target.surfaceVariant), onSurfaceVariant = animatedToken(target.onSurfaceVariant),
+            error = animatedToken(target.error), errorContainer = animatedToken(target.errorContainer)),
+        typography = Typography().let { it.copy(bodyLarge = it.bodyLarge.copy(fontSize = 16.sp, lineHeight = 28.sp)) },
         shapes = AnthropicShapes,
         content = content
     )
 }
+
+@Composable
+private fun animatedToken(target: Color): Color = animateColorAsState(target, tween(180), label = "theme token").value

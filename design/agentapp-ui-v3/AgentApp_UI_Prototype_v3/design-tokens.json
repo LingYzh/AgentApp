@@ -1,0 +1,235 @@
+{
+    "name": "AgentApp Warm Harness",
+    "version": "3.0.0",
+    "baseline": {
+        "repository": "LingYzh/AgentApp",
+        "branch": "master",
+        "commit": "2c947234ab0d29ede6e999193717288363195b7a",
+        "reviewDate": "2026-09-22"
+    },
+    "palette": {
+        "light": {
+            "background": "#FAF9F5",
+            "surface": "#FFFFFF",
+            "surfaceContainer": "#F1EFE8",
+            "surfaceHover": "#EAE7DE",
+            "onSurface": "#262624",
+            "onSurfaceVariant": "#6B6860",
+            "outlineVariant": "#E4E1D7",
+            "primary": "#A34F36",
+            "onPrimary": "#FFFFFF",
+            "primaryContainer": "#F5E7DF",
+            "onPrimaryContainer": "#A34F36",
+            "brandSeed": "#D97757",
+            "success": "#526447",
+            "successContainer": "#EAF0E5",
+            "error": "#A33732",
+            "errorContainer": "#F7E7E4",
+            "info": "#456882",
+            "codeBackground": "#EEECE5",
+            "contentAccent": "#A34F36",
+            "actionContainer": "#A34F36",
+            "onAction": "#FFFFFF",
+            "errorActionContainer": "#A33732",
+            "onErrorAction": "#FFFFFF"
+        },
+        "dark": {
+            "background": "#262624",
+            "surface": "#30302D",
+            "surfaceContainer": "#353530",
+            "surfaceHover": "#41413A",
+            "onSurface": "#F1F0E9",
+            "onSurfaceVariant": "#B6B3AA",
+            "outlineVariant": "#46463F",
+            "primary": "#A9563D",
+            "onPrimary": "#FFFFFF",
+            "primaryContainer": "#49392F",
+            "onPrimaryContainer": "#E6A086",
+            "brandSeed": "#D97757",
+            "success": "#ABC399",
+            "successContainer": "#333D2F",
+            "error": "#ECA29B",
+            "errorContainer": "#493431",
+            "info": "#A5C4DE",
+            "codeBackground": "#20201E",
+            "contentAccent": "#E6A086",
+            "actionContainer": "#A9563D",
+            "onAction": "#FFFFFF",
+            "errorActionContainer": "#A33732",
+            "onErrorAction": "#FFFFFF"
+        }
+    },
+    "spacingAndShapeDp": {
+        "pageHorizontal": 22,
+        "composerHorizontal": 14,
+        "sectionGap": 24,
+        "rowGap": 12,
+        "inlineGap": 8,
+        "icon": 22,
+        "touchTarget": 48,
+        "appBar": 64,
+        "composerRadius": 23,
+        "cardRadius": 15,
+        "sheetRadius": 24,
+        "fieldRadius": 11,
+        "userBubbleRadius": 20,
+        "drawerFraction": 0.86
+    },
+    "typeSp": {
+        "hero": {
+            "fontSize": 32,
+            "lineHeight": 48,
+            "weight": 400,
+            "family": "system-serif-optional"
+        },
+        "pageTitle": {
+            "fontSize": 28,
+            "lineHeight": 40,
+            "weight": 400,
+            "family": "system-serif-optional"
+        },
+        "title": {
+            "fontSize": 18,
+            "lineHeight": 26,
+            "weight": 600
+        },
+        "body": {
+            "fontSize": 16,
+            "lineHeight": 28,
+            "weight": 400
+        },
+        "label": {
+            "fontSize": 13,
+            "lineHeight": 20,
+            "weight": 500
+        },
+        "caption": {
+            "fontSize": 12,
+            "lineHeight": 18,
+            "weight": 400
+        },
+        "code": {
+            "fontSize": 13,
+            "lineHeight": 20,
+            "family": "monospace"
+        }
+    },
+    "motionMs": {
+        "press": 110,
+        "routeEnter": 260,
+        "routeExit": 180,
+        "sheetEnter": 280,
+        "sheetExit": 180,
+        "drawerEnter": 260,
+        "inlineExpand": 240,
+        "feedbackEnter": 200,
+        "feedbackExit": 180,
+        "theme": 180,
+        "state": 180,
+        "listPlacement": 220,
+        "codeHeight": 240,
+        "chevron": 200,
+        "viewport": 260
+    },
+    "rules": [
+        "Do not enable wallpaper-derived dynamic colors for this palette.",
+        "Do not bundle proprietary or system font files.",
+        "Use dp/sp in native implementation, not screenshot pixels.",
+        "Honor system font scale and reduced-motion preferences.",
+        "Brand seed is decorative; use accessible primary for small text/buttons.",
+        "Use contentAccent for light text-only actions on dark surfaces; primary/actionContainer for filled buttons with white onAction."
+    ],
+    "contextSegments": {
+        "system": "#6B91CA",
+        "tools": "#9C82C6",
+        "environment": "#8995A5",
+        "user": "#50A78F",
+        "assistant": "#D3A05B",
+        "results": "#CF7F8B",
+        "attachments": "#5BA9BD",
+        "summary": "#A0AF70"
+    },
+    "motionRules": {
+        "easing": "cubic-bezier(.2,.8,.2,1)",
+        "reducedMotion": "disable transitions; render final state",
+        "streamingMarkdown": "no token/block/page entrance replay; keep native parser sampling",
+        "scope": "local keyed state changes, not whole-page replay",
+        "interruption": "last intent wins; preserve current visible height and cancel stale finish callbacks",
+        "input": "typing, cursor, pointer drag and business cancellation respond immediately",
+        "overlayExit": "non-interactive immediately, removed after exit"
+    },
+    "markdown": {
+        "bodySp": 16,
+        "bodyLineHeightSp": 29,
+        "h1Sp": 27,
+        "h2Sp": 21,
+        "h3Sp": 18,
+        "paragraphGapDp": 17,
+        "headingBeforeDp": {
+            "h1": 29,
+            "h2": 31,
+            "h3": 25
+        },
+        "codeSp": 13,
+        "codeLineHeightSp": 24.05,
+        "codeRadiusDp": 13,
+        "codeWrapDefault": false,
+        "tableOverflow": "local horizontal scroll",
+        "copy": "original raw text"
+    },
+    "reasoning": {
+        "source": "ReasoningSupport.efforts",
+        "nullMeaning": "follow provider config; not none",
+        "commit": "onValueChangeFinished",
+        "touchTargetDp": 48,
+        "thumbDp": 34,
+        "thumbColor": "#FFFFFF",
+        "modelSelectorInside": false
+    },
+    "feedback": {
+        "placement": "layout slot below active topbar; never floating over composer/footer",
+        "durationMsPrototype": 4500,
+        "error": "persistent until dismiss; keep error detail in originating content",
+        "native": "use accessibility recommended timeout"
+    },
+    "toolRow": {
+        "outerBorderDp": 0,
+        "outerHorizontalPaddingDp": 0,
+        "outerBackground": "transparent",
+        "nativeTouchTargetDp": 48,
+        "iconDp": 18,
+        "chevronDp": 14,
+        "gapDp": 8,
+        "bodyAlignment": "same horizontal edges as assistant text",
+        "completedCommandCaption": "运行了命令",
+        "editCaption": "已编辑 {filename} +{addedCount} −{removedCount}",
+        "detail": "inline, no separate screen or modal",
+        "codeSurfaceRadiusDp": 12,
+        "defaultShellMaxHeightDp": 238,
+        "defaultDiffMaxHeightDp": 270,
+        "copy": "original command/output/patch; never HTML",
+        "diffSource": "FileChanges.diff(ChatMessage.fileChange)",
+        "stateKey": "conversationId/messageId/toolCallId"
+    },
+    "diffPalette": {
+        "light": {
+            "addedBackground": "#E8F0E8",
+            "removedBackground": "#F6E8E4",
+            "added": "#32754C",
+            "removed": "#B13E37"
+        },
+        "dark": {
+            "addedBackground": "#24352A",
+            "removedBackground": "#442A26",
+            "added": "#82C897",
+            "removed": "#ED9990"
+        }
+    },
+    "startup": {
+        "initialRoute": "NEW_CHAT",
+        "createConversation": "first valid send only, idempotent",
+        "resume": "preserve restored existing navigation and active task",
+        "history": "drawer entry retained",
+        "unconfigured": "show configuration guidance, no empty record"
+    }
+}

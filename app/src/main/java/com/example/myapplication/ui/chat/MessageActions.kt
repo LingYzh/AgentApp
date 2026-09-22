@@ -1,5 +1,6 @@
 package com.example.myapplication.ui.chat
 
+import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -29,11 +30,11 @@ internal fun MessageActions(message: ChatMessage, canEdit: Boolean, onEdit: () -
                 }
             }
             clipboard.setText(AnnotatedString(copyText))
-        }, modifier = Modifier.size(36.dp)) {
+        }, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Outlined.ContentCopy, "复制消息", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (canEdit) Box {
-            IconButton(onClick = { expanded = true }, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = { expanded = true }, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Outlined.MoreHoriz, "消息操作", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
@@ -73,7 +74,7 @@ internal fun EditMessageDialog(message: ChatMessage, onDismiss: () -> Unit,
             if (message.toolCalls.isNotEmpty()) Text("仅编辑正文；工具调用及执行记录会保留。", style = MaterialTheme.typography.bodySmall)
         }
     }, confirmButton = {
-        TextButton(enabled = text.isNotBlank() || attachmentIds.isNotEmpty() || message.toolCalls.isNotEmpty(),
+        UiTextButton(enabled = text.isNotBlank() || attachmentIds.isNotEmpty() || message.toolCalls.isNotEmpty(),
             onClick = { onSave(text, attachmentIds, included) }) { Text("保存") }
-    }, dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
+    }, dismissButton = { UiTextButton(onClick = onDismiss) { Text("取消") } })
 }

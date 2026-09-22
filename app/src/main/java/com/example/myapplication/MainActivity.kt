@@ -1,6 +1,17 @@
 package com.example.myapplication
 
 import android.os.Bundle
+import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.example.myapplication.data.model.Conversation
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -98,8 +109,9 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 object Routes {
+    const val NEW_CHAT = "newChat?agentId={agentId}"
     const val CONVERSATIONS = "conversations"
-    const val CHAT = "chat/{conversationId}"
+    const val CHAT = "chat/{conversationId}?session={session}"
     const val PROVIDERS = "providers"
     const val PROVIDER_EDIT = "providerEdit/{providerId}"
     const val FILES = "files"
@@ -111,7 +123,8 @@ object Routes {
     const val AGENT_EDIT = "agentEdit/{id}"
     const val SETTINGS = "settings"
 
-    fun chat(id: String) = "chat/$id"
+    fun newChat(agentId: String? = null) = "newChat" + (agentId?.let { "?agentId=$it" } ?: "")
+    fun chat(id: String, session: String? = null) = "chat/$id" + (session?.let { "?session=$it" } ?: "")
     fun providerEdit(id: String) = "providerEdit/$id"
     fun fileView(path: String) = "fileView/" + URLEncoder.encode(path, StandardCharsets.UTF_8.toString())
     fun skillEdit(name: String) = "skillEdit/" + URLEncoder.encode(name, StandardCharsets.UTF_8.toString())
@@ -122,6 +135,7 @@ object Routes {
  * 顶级路由集合，用于判断是否开启侧滑抽屉手势
  */
 val TopLevelRoutes = setOf(
+    Routes.NEW_CHAT,
     Routes.CONVERSATIONS,
     Routes.AGENTS,
     Routes.PROVIDERS,
@@ -191,6 +205,16 @@ fun AppRoot() {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
     val isTopLevel = currentRoute in TopLevelRoutes
+    val app = LocalContext.current.applicationContext as AgentApp
+    var recent by remember { mutableStateOf(emptyList<Conversation>()) }
+    LaunchedEffect(drawerState.targetValue, currentRoute) {
+        if (drawerState.targetValue == DrawerValue.Open) {
+            recent = withContext(Dispatchers.IO) {
+                app.store.listConversations().filter { it.parentConversationId == null }
+                    .sortedByDescending { it.messages.maxOfOrNull { message -> message.timestamp } ?: it.createdAt }.take(3)
+            }
+        }
+    }
 
     // 当抽屉打开时，按下物理或手势返回键优先合拢抽屉，杜绝手势穿透
     BackHandler(enabled = drawerState.isOpen) {
@@ -203,13 +227,15 @@ fun AppRoot() {
         scrimColor = MaterialTheme.colorScheme.scrim.copy(alpha = 0.38f),
         drawerContent = {
             ModalDrawerSheet(
-                modifier = Modifier.width(ExpressiveTokens.DrawerWidth),
-                drawerShape = ExpressiveTokens.DrawerShape,
-                drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                drawerTonalElevation = 2.dp
+                modifier = Modifier.fillMaxWidth(.86f),
+                drawerShape = RoundedCornerShape(topEnd = 23.dp, bottomEnd = 23.dp),
+                drawerContainerColor = MaterialTheme.colorScheme.background,
+                drawerTonalElevation = 0.dp
             ) {
                 AppDrawerSheetContent(
                     currentRoute = currentRoute,
+                    recent = recent,
+                    onClose = { scope.launch { drawerState.close() } },
                     onNavigate = { route ->
                         scope.launch { drawerState.close() }
                         if (currentRoute != route) {
@@ -225,78 +251,40 @@ fun AppRoot() {
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background
         ) {
-            // MD3e 弹性物理弹簧视差过渡动效（下钻详情页）
             val detailEnter: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-                slideInHorizontally(
-                    initialOffsetX = { (it * 0.32f).toInt() },
-                    animationSpec = spring(
-                        dampingRatio = 0.82f,
-                        stiffness = Spring.StiffnessMediumLow
-                    )
-                ) + fadeIn(animationSpec = tween(220))
+                slideInHorizontally(tween(260), initialOffsetX = { it / 12 }) + fadeIn(tween(260))
             }
             val detailExit: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-                slideOutHorizontally(
-                    targetOffsetX = { -(it * 0.15f).toInt() },
-                    animationSpec = tween(220, easing = FastOutSlowInEasing)
-                ) + fadeOut(animationSpec = tween(180))
+                slideOutHorizontally(tween(180), targetOffsetX = { -it / 16 }) + fadeOut(tween(180))
             }
             val detailPopEnter: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-                slideInHorizontally(
-                    initialOffsetX = { -(it * 0.15f).toInt() },
-                    animationSpec = tween(220, easing = FastOutSlowInEasing)
-                ) + fadeIn(animationSpec = tween(220))
+                slideInHorizontally(tween(260), initialOffsetX = { -it / 12 }) + fadeIn(tween(260))
             }
             val detailPopExit: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-                slideOutHorizontally(
-                    targetOffsetX = { (it * 0.32f).toInt() },
-                    animationSpec = spring(
-                        dampingRatio = 0.82f,
-                        stiffness = Spring.StiffnessMediumLow
-                    )
-                ) + fadeOut(animationSpec = tween(180))
+                slideOutHorizontally(tween(180), targetOffsetX = { it / 16 }) + fadeOut(tween(180))
             }
 
             NavHost(
                 navController = navController,
-                startDestination = Routes.CONVERSATIONS,
+                startDestination = Routes.NEW_CHAT,
                 modifier = Modifier.fillMaxSize(),
-                // 平级页面切换采用 MD3e Shared Axis Z 柔和缩放淡入淡出
-                enterTransition = {
-                    fadeIn(animationSpec = tween(280, easing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f))) +
-                        scaleIn(
-                            initialScale = 0.94f,
-                            animationSpec = tween(280, easing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f))
-                        )
-                },
-                exitTransition = {
-                    fadeOut(animationSpec = tween(180, easing = FastOutLinearInEasing)) +
-                        scaleOut(
-                            targetScale = 1.03f,
-                            animationSpec = tween(180, easing = FastOutLinearInEasing)
-                        )
-                },
-                popEnterTransition = {
-                    fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing)) +
-                        scaleIn(
-                            initialScale = 0.95f,
-                            animationSpec = tween(240, easing = FastOutSlowInEasing)
-                        )
-                },
-                popExitTransition = {
-                    fadeOut(animationSpec = tween(180, easing = FastOutLinearInEasing)) +
-                        scaleOut(
-                            targetScale = 1.04f,
-                            animationSpec = tween(180, easing = FastOutLinearInEasing)
-                        )
-                }
+                enterTransition = detailEnter,
+                exitTransition = detailExit,
+                popEnterTransition = detailPopEnter,
+                popExitTransition = detailPopExit
             ) {
+                composable(Routes.NEW_CHAT,
+                    arguments = listOf(navArgument("agentId") { type = NavType.StringType; nullable = true; defaultValue = null })
+                ) { entry ->
+                    com.example.myapplication.ui.chat.NewChatScreen(navController, entry.arguments?.getString("agentId"), openDrawer)
+                }
                 composable(Routes.CONVERSATIONS) {
                     ConversationsScreen(navController, openDrawer)
                 }
                 composable(
                     Routes.CHAT,
-                    arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
+                    arguments = listOf(navArgument("conversationId") { type = NavType.StringType },
+                        navArgument("session") { type = NavType.StringType; nullable = true; defaultValue = null }),
                     enterTransition = detailEnter,
                     exitTransition = detailExit,
                     popEnterTransition = detailPopEnter,
@@ -304,7 +292,8 @@ fun AppRoot() {
                 ) { backStack ->
                     ChatScreen(
                         navController = navController,
-                        conversationId = backStack.arguments?.getString("conversationId").orEmpty()
+                        conversationId = requireNotNull(backStack.arguments?.getString("conversationId")),
+                        sessionKey = backStack.arguments?.getString("session") ?: requireNotNull(backStack.arguments?.getString("conversationId"))
                     )
                 }
                 composable(Routes.PROVIDERS) { ProvidersScreen(navController, openDrawer) }
@@ -376,203 +365,74 @@ fun AppRoot() {
 @Composable
 fun AppDrawerSheetContent(
     currentRoute: String?,
-    onNavigate: (String) -> Unit
+    onNavigate: (String) -> Unit,
+    recent: List<Conversation> = emptyList(),
+    onClose: () -> Unit = {}
 ) {
-    val workspaceEntries = listOf(
-        DrawerEntry(Routes.CONVERSATIONS, "对话", Icons.AutoMirrored.Filled.Chat),
-        DrawerEntry(Routes.AGENTS, "Agents", Icons.Filled.Face),
-        DrawerEntry(Routes.FILES, "文件工作区", Icons.Filled.Folder),
-        DrawerEntry(Routes.PROVIDERS, "模型配置", Icons.Filled.Terminal)
+    val entries = listOf(
+        DrawerEntry(Routes.AGENTS, "Agents", Icons.Outlined.SmartToy),
+        DrawerEntry(Routes.FILES, "工作区文件", Icons.Outlined.Folder),
+        DrawerEntry(Routes.SKILLS, "Skills", Icons.Outlined.Inventory2),
+        DrawerEntry(Routes.MEMORY, "长期记忆", Icons.Outlined.Psychology),
+        DrawerEntry(Routes.PROVIDERS, "模型配置", Icons.Outlined.Memory)
     )
-
-    val systemEntries = listOf(
-        DrawerEntry(Routes.MEMORY, "记忆库", Icons.Filled.Star),
-        DrawerEntry(Routes.SKILLS, "Skills 扩展", Icons.Filled.Build),
-        DrawerEntry(Routes.SETTINGS, "设置 / 备份", Icons.Filled.Settings)
-    )
-
-    Column(
-        modifier = Modifier
-            .fillMaxHeight()
-            .verticalScroll(rememberScrollState())
-            .navigationBarsPadding()
-            .padding(bottom = 16.dp)
-    ) {
-        // MD3e Expressive Brand Header
-        Surface(
-            shape = ExpressiveTokens.HeaderCardShape,
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Filled.AutoAwesome,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(22.dp)
-                            )
+    Column(Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.background).navigationBarsPadding()) {
+        Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("AgentApp", Modifier.weight(1f), fontSize = 19.sp, fontWeight = FontWeight.Medium)
+            IconButton(onClick = onClose) { Icon(Icons.Default.Close, "关闭导航", Modifier.size(20.dp)) }
+        }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+            Button(onClick = { onNavigate(Routes.newChat()) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(
+                    containerColor = androidx.compose.ui.graphics.Color(0xFF3B3B34), contentColor = androidx.compose.ui.graphics.Color.White)) {
+                Icon(Icons.Default.Add, null, Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp)); Text("新对话")
+            }
+            Spacer(Modifier.height(16.dp))
+            DrawerNavigationRow("搜索与全部对话", Icons.Outlined.Search) { onNavigate(Routes.CONVERSATIONS) }
+            Text("最近", Modifier.padding(top = 20.dp, bottom = 10.dp), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (recent.isEmpty()) Text("暂无对话", Modifier.padding(13.dp), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            recent.forEach { conversation ->
+                key(conversation.id) {
+                    Surface(onClick = { onNavigate(Routes.chat(conversation.id)) }, color = androidx.compose.ui.graphics.Color.Transparent) {
+                        Box(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 13.dp), contentAlignment = Alignment.CenterStart) {
+                            Text(conversation.title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, fontSize = 12.sp)
                         }
                     }
-                    Column {
-                        Text(
-                            text = "AgentApp",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "智能助理与工作流",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(10.dp))
-                Surface(
-                    shape = ExpressiveTokens.StatusBadgeShape,
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                ) {
-                    Text(
-                        text = "MD3e · Expressive",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        fontWeight = FontWeight.Medium
-                    )
                 }
             }
-        }
-
-        // 分组一：工作空间
-        Text(
-            text = "工作空间",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 24.dp, top = 8.dp, bottom = 6.dp),
-            fontWeight = FontWeight.SemiBold
-        )
-
-        workspaceEntries.forEach { entry ->
-            val selected = currentRoute == entry.route
-            NavigationDrawerItem(
-                icon = { Icon(entry.icon, contentDescription = null) },
-                label = { Text(entry.label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
-                badge = {
-                    if (selected) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .background(MaterialTheme.colorScheme.primary, CircleShape)
-                        )
-                    }
-                },
-                selected = selected,
-                onClick = { onNavigate(entry.route) },
-                shape = ExpressiveTokens.PillShape,
-                colors = NavigationDrawerItemDefaults.colors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                ),
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-            )
-        }
-
-        HorizontalDivider(
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-        )
-
-        // 分组二：能力与偏好
-        Text(
-            text = "能力与偏好",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 24.dp, top = 4.dp, bottom = 6.dp),
-            fontWeight = FontWeight.SemiBold
-        )
-
-        systemEntries.forEach { entry ->
-            val selected = currentRoute == entry.route
-            NavigationDrawerItem(
-                icon = { Icon(entry.icon, contentDescription = null) },
-                label = { Text(entry.label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
-                badge = {
-                    if (selected) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .background(MaterialTheme.colorScheme.primary, CircleShape)
-                        )
-                    }
-                },
-                selected = selected,
-                onClick = { onNavigate(entry.route) },
-                shape = ExpressiveTokens.PillShape,
-                colors = NavigationDrawerItemDefaults.colors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                ),
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.weight(1f, fill = false))
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Expressive Footer 卡片
-        Surface(
-            shape = ExpressiveTokens.CardShape,
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.CheckCircle,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(16.dp)
-                )
-                Text(
-                    text = "本地隔离沙盒 · 离线随时就绪",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Text("我的工作环境", Modifier.padding(top = 22.dp, bottom = 10.dp), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            entries.forEach { entry ->
+                DrawerNavigationRow(entry.label, entry.icon, currentRoute == entry.route) { onNavigate(entry.route) }
             }
+            Spacer(Modifier.height(15.dp))
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            DrawerNavigationRow("设置", Icons.Outlined.Tune, currentRoute == Routes.SETTINGS) { onNavigate(Routes.SETTINGS) }
+            Text("本地优先 · 自由连接", Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
+                fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
-@Preview(showBackground = true)
+@Composable
+private fun DrawerNavigationRow(label: String, icon: ImageVector, selected: Boolean = false, onClick: () -> Unit) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(11.dp),
+        color = if (selected) MaterialTheme.colorScheme.surfaceContainer else androidx.compose.ui.graphics.Color.Transparent) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, Modifier.size(18.dp))
+            Text(label, Modifier.padding(start = 13.dp), fontSize = 13.sp)
+        }
+    }
+}
+
+@Preview(showBackground = true, widthDp = 360, heightDp = 800)
 @Composable
 private fun AppDrawerPreviewLight() {
     AgentTheme(themeMode = "light") {
-        Surface(modifier = Modifier.width(ExpressiveTokens.DrawerWidth)) {
+        Surface(modifier = Modifier.fillMaxWidth(.86f), color = MaterialTheme.colorScheme.background) {
             AppDrawerSheetContent(
                 currentRoute = Routes.CONVERSATIONS,
                 onNavigate = {}
@@ -581,11 +441,11 @@ private fun AppDrawerPreviewLight() {
     }
 }
 
-@Preview(showBackground = true)
+@Preview(showBackground = true, widthDp = 360, heightDp = 800)
 @Composable
 private fun AppDrawerPreviewDark() {
     AgentTheme(themeMode = "dark") {
-        Surface(modifier = Modifier.width(ExpressiveTokens.DrawerWidth)) {
+        Surface(modifier = Modifier.fillMaxWidth(.86f), color = MaterialTheme.colorScheme.background) {
             AppDrawerSheetContent(
                 currentRoute = Routes.PROVIDERS,
                 onNavigate = {}

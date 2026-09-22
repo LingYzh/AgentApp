@@ -1,5 +1,6 @@
 package com.example.myapplication.ui.providers
 
+import com.example.myapplication.ui.components.UiScaffold
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,7 +40,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.TextButton
+import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Scaffold
@@ -254,7 +255,7 @@ fun ProvidersScreen(navController: NavHostController, openDrawer: () -> Unit) {
     deleteError?.let { message ->
         AlertDialog(onDismissRequest = vm::clearDeleteError,
             title = { Text("删除失败") }, text = { Text(message) },
-            confirmButton = { TextButton(onClick = vm::clearDeleteError) { Text("确定") } })
+            confirmButton = { UiTextButton(onClick = vm::clearDeleteError) { Text("确定") } })
     }
 
 
@@ -297,7 +298,7 @@ fun ProvidersContent(
 ) {
     val selection = rememberListSelection(config.providers.map { it.id }, config.providers.associate { it.id to it.name.ifBlank { it.model } })
 
-    Scaffold(
+    UiScaffold(
         topBar = {
             TopAppBar(
                 title = { Text("模型配置") },
@@ -305,7 +306,7 @@ fun ProvidersContent(
                     IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "菜单") }
                 },
                 actions = {
-                    TextButton(onClick = if (selection.active) selection.onExit else selection.onEnter,
+                    UiTextButton(onClick = if (selection.active) selection.onExit else selection.onEnter,
                         enabled = !busy) { Text(if (selection.active) "完成" else "管理") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -316,8 +317,9 @@ fun ProvidersContent(
             )
         },
         bottomBar = {
-            if (selection.active) ListSelectionBar(selection, busy, onDeleteSelected,
-                onImport = onImport, onExport = onExportSelected)
+            androidx.compose.animation.AnimatedVisibility(selection.active) {
+                ListSelectionBar(selection, busy, onDeleteSelected, onImport = onImport, onExport = onExportSelected)
+            }
         },
         floatingActionButton = {
             if (!selection.active) {
@@ -356,21 +358,23 @@ fun ProvidersContent(
                         onClick = { if (!busy) {
                             if (selection.active) selection.onToggle(p.id) else onEditProvider(p.id)
                         } },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.animateItem().fillMaxWidth()
                     ) {
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (selection.active) Checkbox(
+                            androidx.compose.animation.Crossfade(selection.active, label = "provider selection") { managing ->
+                            if (managing) Checkbox(
                                 checked = p.id in selection.selectedIds,
-                                onCheckedChange = { selection.onToggle(p.id) },
+                                onCheckedChange = { if (selection.active) selection.onToggle(p.id) },
                                 enabled = !busy
                             ) else RadioButton(
                                 selected = p.id == config.selectedProviderId,
-                                onClick = { onSelectProvider(p.id) },
+                                onClick = { if (!selection.active) onSelectProvider(p.id) },
                                 enabled = !busy
                             )
+                            }
                             Column(Modifier.weight(1f)) {
                                 Text(
                                     p.name.ifBlank { p.model },
@@ -561,7 +565,7 @@ fun ProviderEditContent(
         contextWindowOverrides = contextWindowOverrides
     )
 
-    Scaffold(
+    UiScaffold(
         topBar = {
             TopAppBar(
                 title = { Text(if (isNew) "添加模型" else "编辑模型") },
@@ -668,7 +672,7 @@ fun ProviderEditContent(
                 ) {
                     modelCandidates.forEach { m ->
                         DropdownMenuItem(
-                            text = { Text(m) },
+                            text = { Column { Text(m); com.example.myapplication.ui.chat.ModelCapabilitiesRow(buildConfig(), m) } },
                             onClick = { model = m; modelMenuExpanded = false }
                         )
                     }
@@ -749,7 +753,7 @@ fun ProviderEditContent(
                     updateCurrentCapabilities { it.copy(video = !it.video) }
                 }
                 if (currentOverride != null) {
-                    TextButton(onClick = { capabilityOverrides = capabilityOverrides - currentModelId }) {
+                    UiTextButton(onClick = { capabilityOverrides = capabilityOverrides - currentModelId }) {
                         Text("恢复接口自动能力")
                     }
                 }

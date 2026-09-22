@@ -146,7 +146,7 @@ object FileChanges {
             return fallback(
                 before = null,
                 after = afterText,
-                reason = "原文件快照不可用，已降级为当前快照对照",
+                reason = "原文件快照不可用，仅显示已保存的修改后快照",
                 previewOmitted = change.previewOmitted
             )
         }

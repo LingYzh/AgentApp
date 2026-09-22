@@ -1,6 +1,24 @@
 package com.example.myapplication.ui.chat
 
+import com.example.myapplication.ui.components.UiTextButton
+import com.example.myapplication.ui.components.inertWhen
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import com.example.myapplication.ui.components.InlineCodePanel
+import com.example.myapplication.ui.files.InlineFileDiff
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -21,8 +39,6 @@ import com.example.myapplication.data.model.Conversation
 import com.example.myapplication.data.model.MessageAttachment
 import com.example.myapplication.data.model.ToolCallInfo
 import com.example.myapplication.data.store.FileChanges
-import com.example.myapplication.ui.files.FileDiffDialog
-import com.example.myapplication.ui.files.FileDiffPreview
 import com.example.myapplication.ui.files.FileDiffStats
 import java.io.File
 
@@ -48,7 +64,7 @@ internal fun AttachmentChip(
                 Text("$size · ${if (attachment.delivery == "native") "模型直接读取" else "工作区文件"}",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (onToggle != null) TextButton(onClick = onToggle, enabled = enabled) { Text("切换") }
+            if (onToggle != null) UiTextButton(onClick = onToggle, enabled = enabled) { Text("切换") }
             if (onRemove != null) IconButton(onClick = onRemove, enabled = enabled) { Icon(Icons.Default.Close, "移除附件") }
         }
     }
@@ -63,127 +79,81 @@ internal fun ToolActivityRow(
     onOpenChild: (String) -> Unit,
     onViewFile: (String) -> Unit,
     queued: Boolean = false,
-    allowFileNavigation: Boolean = true
+    allowFileNavigation: Boolean = true,
+    awaitingApproval: Boolean = false
 ) {
-    if (call.name == Tools.RUN_SUBAGENT) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (child?.executionStatus == "running" || (running && result == null))
-                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-            else Icon(Icons.Default.SmartToy, null, Modifier.size(18.dp))
-            Text(child?.title ?: "子代理", Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.labelLarge)
-            Text(child?.let { childStatus(it.executionStatus) } ?: when {
-                result?.isError == true -> "失败"
-                result != null -> "已完成"
-                running -> "运行中"
-                queued -> "等待执行"
-                else -> "未完成"
-            }, style = MaterialTheme.typography.labelSmall)
-        }
-        return
-    }
-    var showDiff by rememberSaveable(call.id) { mutableStateOf(false) }
-    val isFileWrite = call.name == Tools.WRITE_FILE || call.name == Tools.EDIT_FILE
-    val fileChange = result?.takeIf { !it.isError && isFileWrite }?.fileChange
-    if (showDiff) fileChange?.let { FileDiffDialog(it) { showDiff = false } }
-    var showDetails by rememberSaveable(call.id) { mutableStateOf(false) }
-    var showRaw by rememberSaveable(call.id) { mutableStateOf(false) }
-    var showFull by rememberSaveable(call.id) { mutableStateOf(false) }
+    var expanded by rememberSaveable(call.id) { mutableStateOf(false) }
     val presentation = remember(call, result) { presentTool(call, result) }
-    val displayPath = fileChange?.path ?: presentation.path
-    val fileDiff = remember(fileChange) { fileChange?.let { change -> FileChanges.diff(change) } }
-    val status = when {
-        result?.isError == true && result.content.startsWith("未执行") -> "未执行"
-        result?.isError == true && (result.content.contains("中断") || result.content.contains("取消")) -> "已停止"
-        result?.isError == true -> "失败"
-        result != null -> "完成"
-        running -> "进行中"
-        queued -> "等待执行"
-        else -> "未完成"
+    val isWrite = call.name == Tools.WRITE_FILE || call.name == Tools.EDIT_FILE
+    val change = result?.takeIf { !it.isError && isWrite }?.fileChange
+    val diff by produceState<com.example.myapplication.data.store.FileDiffResult?>(null, change) {
+        value = change?.let { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { FileChanges.diff(it) } }
     }
-    val tint = if (result?.isError == true) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-        Surface(shape = MaterialTheme.shapes.small,
-            color = MaterialTheme.colorScheme.surfaceContainerLow) {
-            Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (running && result == null) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                else Icon(if (result?.isError == true) Icons.Default.ErrorOutline else if (result != null) Icons.Default.Check else toolIcon(call.name),
-                    null, Modifier.size(18.dp), tint = tint)
-                Column(Modifier.weight(1f)) {
-                    Text(presentation.title, style = MaterialTheme.typography.labelLarge)
-                    displayPath?.let {
-                        Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = tint)
-                    }
-                    presentation.summary?.takeIf { fileDiff == null }?.let {
-                        Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    fileDiff?.let { diff ->
-                        FileDiffStats(
-                            result = diff,
-                            modifier = Modifier.padding(top = 3.dp)
-                        )
-                    }
-                    if (child != null) Text(child.modelOverride.orEmpty(), maxLines = 1,
-                        style = MaterialTheme.typography.bodySmall, color = tint)
-                }
-                Text(status, style = MaterialTheme.typography.labelSmall, color = tint)
-                IconButton(onClick = { showDetails = !showDetails }, modifier = Modifier.size(40.dp)) {
-                    Icon(if (showDetails) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        if (showDetails) "收起工具详情" else "查看工具详情", tint = tint)
+    val completed = result != null && !result.isError
+    val label = when {
+        call.name == Tools.RUN_COMMAND -> commandCaption(result, running, queued, awaitingApproval)
+        isWrite && completed -> if (change?.beforeExists == false) "已新建" else "已编辑"
+        call.name == Tools.DELETE_FILE && completed -> "已删除"
+        result?.isError == true -> "${presentation.title} · 失败或中止"
+        completed -> presentation.title
+        awaitingApproval -> "${presentation.title} · 等待批准"
+        running -> "${presentation.title} · 进行中"
+        queued -> "${presentation.title} · 等待执行"
+        else -> "${presentation.title} · 未返回"
+    }
+    val rotation by animateFloatAsState(if (expanded) 180f else 0f, tween(200), label = "tool chevron")
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            .semantics { stateDescription = if (expanded) "已展开" else "已收起" }
+            .clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(toolIcon(call.name), null, Modifier.size(18.dp))
+            Text(label, style = MaterialTheme.typography.labelLarge)
+            if (isWrite && completed) {
+                Text((change?.path ?: presentation.path).orEmpty().substringAfterLast('/').substringAfterLast('\\'),
+                    Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelLarge)
+                diff?.takeIf { !it.usedFallback && !it.previewOmitted }?.let {
+                    FileDiffStats(it)
                 }
             }
+            Icon(Icons.Default.ExpandMore, null, Modifier.size(16.dp).rotate(rotation))
         }
-        if (child != null) TextButton(onClick = { onOpenChild(child.id) }) { Text("查看子代理 · ${childStatus(child.executionStatus)}") }
-        if (showDetails) {
-            Column(Modifier.padding(start = 18.dp, top = 6.dp, end = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                fileChange?.let { change ->
-                    FileDiffPreview(
-                        change = change,
-                        onOpenFull = { showDiff = true },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                if (fileChange == null) {
-                    Text("结果", style = MaterialTheme.typography.labelSmall, color = tint)
-                    Text(
-                        text = presentation.summary ?: "暂无可显示结果",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                if (allowFileNavigation && (isFileWrite || call.name == Tools.READ_FILE)) {
-                    extractFilePath(call.argumentsJson)?.let { path -> TextButton(onClick = { onViewFile(path) }) { Text("查看文件") } }
-                }
-                TextButton(onClick = { showRaw = !showRaw }) {
-                    Text(if (showRaw) "收起原始数据" else "原始数据")
-                }
-                if (showRaw) {
-                    Text("参数 · ${call.name}", style = MaterialTheme.typography.labelSmall, color = tint)
-                    SelectionContainer {
-                        Text(
-                            if (showFull) call.argumentsJson else call.argumentsJson.take(2000),
-                            fontFamily = FontFamily.Monospace,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                    result?.let {
-                        Text("原始结果", style = MaterialTheme.typography.labelSmall, color = tint)
-                        SelectionContainer {
-                            Text(
-                                if (showFull) it.content else it.content.take(3000),
-                                fontFamily = FontFamily.Monospace,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = tint
-                            )
+        AnimatedVisibility(expanded, enter = expandVertically(tween(240)) + fadeIn(tween(180)),
+            exit = shrinkVertically(tween(240)) + fadeOut(tween(180))) {
+            Column(Modifier.inertWhen(!expanded), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                when {
+                    call.name == Tools.RUN_COMMAND -> {
+                        val command = remember(call.argumentsJson) { runCatching {
+                            Json.parseToJsonElement(call.argumentsJson).jsonObject["command"]?.jsonPrimitive?.content
+                        }.getOrNull() }
+                        if (call.argumentsJson.isEmpty()) Text("原始命令未保存在此记录中。", style = MaterialTheme.typography.bodySmall)
+                        else InlineCodePanel(if (command == null) "参数（无法解析命令）" else "命令", command ?: call.argumentsJson)
+                        if (result == null) Text("等待此调用返回输出", style = MaterialTheme.typography.bodySmall)
+                        else {
+                            val record = remember(result.content) { commandRecord(result.content) }
+                            record.exitCode?.let { Text("退出码 $it", style = MaterialTheme.typography.labelSmall) }
+                            InlineCodePanel(if (result.isError) "错误 / 输出" else "输出", record.output)
                         }
                     }
-                    if (call.argumentsJson.length > 2000 || (result?.content?.length ?: 0) > 3000) {
-                        TextButton(onClick = { showFull = !showFull }) {
-                            Text(if (showFull) "收起长内容" else "显示完整内容")
-                        }
+                    isWrite && completed -> {
+                        if (change != null) InlineFileDiff(change, diff)
+                        else Text("无法显示此次 Diff：没有保存修改快照。", style = MaterialTheme.typography.bodySmall)
+                    }
+                    else -> {
+                        if (call.argumentsJson.isEmpty()) Text("原始参数未保存在此记录中。", style = MaterialTheme.typography.bodySmall)
+                        else InlineCodePanel("参数 · ${call.name}", call.argumentsJson)
+                        if (result == null) Text("等待此调用返回结果")
+                        else InlineCodePanel("原始结果", result.content, "本次工具返回空内容")
+                    }
+                }
+                if (child != null) UiTextButton(onClick = { onOpenChild(child.id) }) {
+                    Text("查看子代理 · ${childStatus(child.executionStatus)}")
+                }
+                if (allowFileNavigation && (isWrite || call.name == Tools.READ_FILE)) {
+                    extractFilePath(call.argumentsJson)?.let { path ->
+                        UiTextButton(onClick = { onViewFile(path) }) { Text("查看当前文件") }
                     }
                 }
             }

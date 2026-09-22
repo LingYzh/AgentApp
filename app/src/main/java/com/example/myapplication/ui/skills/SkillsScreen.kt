@@ -1,5 +1,6 @@
 package com.example.myapplication.ui.skills
 
+import com.example.myapplication.ui.components.UiScaffold
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -51,7 +52,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -438,10 +439,10 @@ fun SkillsScreen(navController: NavHostController, openDrawer: () -> Unit) {
                 }
             },
             dismissButton = {
-                TextButton(onClick = { exportConfirmNames = arrayListOf() }) { Text("取消") }
+                UiTextButton(onClick = { exportConfirmNames = arrayListOf() }) { Text("取消") }
             },
             confirmButton = {
-                TextButton(enabled = !busy, onClick = {
+                UiTextButton(enabled = !busy, onClick = {
                     exportConfirmNames = arrayListOf()
                     exportNames = snapshot
                     exportPickerActive = true
@@ -472,7 +473,7 @@ fun SkillsContent(
     busy: Boolean = false
 ) {
     val selection = rememberListSelection(skills.map { it.name })
-    Scaffold(
+    UiScaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Skills 扩展") },
@@ -488,7 +489,7 @@ fun SkillsContent(
                     }
                 },
                 actions = {
-                    TextButton(
+                    UiTextButton(
                         onClick = if (selection.active) selection.onExit else selection.onEnter,
                         enabled = !busy
                     ) {
@@ -513,7 +514,7 @@ fun SkillsContent(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            if (selection.active) {
+            androidx.compose.animation.AnimatedVisibility(selection.active) {
                 ListSelectionBar(
                     selection = selection,
                     busy = busy,
@@ -563,7 +564,7 @@ fun SkillsContent(
                                 else onSelectSkill(skill.name)
                             }
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.animateItem().fillMaxWidth()
                     ) {
                         Column(
                             modifier = Modifier
@@ -774,7 +775,7 @@ fun SkillEditContent(
     val kebabName = remember(name) { formatKebabCase(name) }
     val isNameCompliant = name.isNotBlank() && name == kebabName
 
-    Scaffold(
+    UiScaffold(
         topBar = {
             TopAppBar(
                 title = { Text(if (isNew) "新建 Skill" else "编辑 Skill") },
