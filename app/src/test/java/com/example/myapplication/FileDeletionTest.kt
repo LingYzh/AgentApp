@@ -66,11 +66,12 @@ class FileDeletionTest {
         for (change in 0..2) {
             val (store, session, executor) = setup(PermissionMode.ACCEPT_EDIT)
             val file = store.writeWorkspace("a.txt", "keep")
-            val job = async { executor.execute(Tools.DELETE_FILE, """{"path":"a.txt"}""") }
+            val filePath = file.path.replace("\\", "\\\\")
+            val job = async { executor.execute(Tools.DELETE_FILE, """{"path":"$filePath"}""") }
             val request = pending(session)
             when (change) {
                 0 -> session.setMode(PermissionMode.READONLY)
-                1 -> session.conversation.allowedDirectories = listOf(temp.newFolder().canonicalPath)
+                1 -> session.conversation.workingDirectory = temp.newFolder().canonicalPath
                 2 -> file.writeText("changed and longer")
             }
             session.coordinator.resolve(request.id, PermissionDecision.ALLOW_ONCE)
@@ -94,10 +95,11 @@ class FileDeletionTest {
     @Test fun `delete respects scopes metadata and explicit tool allowlist`() = runBlocking {
         val (store, session, executor) = setup(PermissionMode.AUTO)
         val file = store.writeWorkspace("a.txt", "keep")
-        session.conversation.allowedDirectories = listOf(temp.newFolder().canonicalPath)
-        assertTrue(executor.execute(Tools.DELETE_FILE, """{"path":"a.txt"}""").startsWith("错误"))
+        session.conversation.workingDirectory = temp.newFolder("external-cwd").canonicalPath
+        val workspacePath = file.path.replace("\\", "\\\\")
+        assertTrue(executor.execute(Tools.DELETE_FILE, """{"path":"$workspacePath"}""").startsWith("错误"))
         assertTrue(file.exists())
-        session.conversation.allowedDirectories = emptyList()
+        session.conversation.workingDirectory = null
         val restricted = ToolExecutor(store, allowedTools = setOf(Tools.READ_FILE), permissionSession = session)
         assertFalse(restricted.specs().any { it.name == Tools.DELETE_FILE })
         assertTrue(restricted.execute(Tools.DELETE_FILE, """{"path":"a.txt"}""").startsWith("错误"))

@@ -129,15 +129,19 @@ class PermissionRuntimeTest {
     }
 
     @Test
-    fun `scope rejects traversal outside configured canonical directory but not managed memory or skills`() = runBlocking {
+    fun `file scope is workspace and extra directory union while managed memory and skills stay available`() = runBlocking {
         val root = store.workspaceFile(".")
         val allowed = File(root, "allowed").apply { mkdirs() }
+        val outside = tmp.newFolder("outside")
+        val outsidePath = File(outside, "outside.txt").path.replace("\\", "\\\\")
         val conversation = Conversation(allowedDirectories = listOf(allowed.canonicalPath))
         val executor = executor(conversation)
 
         assertTrue(executor.execute(Tools.WRITE_FILE, """{"path":"allowed/in.txt","content":"yes"}""").contains("已写入"))
-        assertTrue(executor.execute(Tools.WRITE_FILE, """{"path":"allowed/../outside.txt","content":"no"}""").startsWith("错误:"))
-        assertFalse(File(root, "outside.txt").exists())
+        assertTrue(executor.execute(Tools.WRITE_FILE, """{"path":"allowed/../outside.txt","content":"workspace"}""").contains("已写入"))
+        assertTrue(File(root, "outside.txt").exists())
+        assertTrue(executor.execute(Tools.WRITE_FILE, """{"path":"$outsidePath","content":"no"}""").startsWith("错误:"))
+        assertFalse(File(outside, "outside.txt").exists())
         assertTrue(executor.execute(Tools.SAVE_MEMORY, """{"title":"x","content":"y"}""").contains("已保存记忆"))
         assertTrue(executor.execute(Tools.SEARCH_MEMORY, """{"query":"y"}""").contains("[id="))
         val memoryId = store.listMemories().single().id
@@ -150,8 +154,15 @@ class PermissionRuntimeTest {
 
     @Test
     fun `accept edit cannot alter permission metadata but auto can`() = runBlocking {
-        val accept = Conversation(permissionMode = PermissionMode.ACCEPT_EDIT)
-        val auto = Conversation(permissionMode = PermissionMode.AUTO)
+        val metadataDirectory = requireNotNull(store.configFile.parentFile).canonicalPath
+        val accept = Conversation(
+            permissionMode = PermissionMode.ACCEPT_EDIT,
+            allowedDirectories = listOf(metadataDirectory)
+        )
+        val auto = Conversation(
+            permissionMode = PermissionMode.AUTO,
+            allowedDirectories = listOf(metadataDirectory)
+        )
         val path = store.configFile.canonicalPath.replace("\\", "\\\\")
 
         assertTrue(executor(accept).execute(Tools.WRITE_FILE, """{"path":"$path","content":"{}"}""").startsWith("错误:"))
@@ -192,7 +203,11 @@ class PermissionRuntimeTest {
             allowedDirectories = listOf(allowed.canonicalPath)
         )
         val session = PermissionSession(store, conversation, coordinator)
-        val executor = ToolExecutor(store = store, permissionSession = session)
+        val executor = ToolExecutor(
+            store = store,
+            permissionSession = session,
+            commandExecutor = { command, _ -> "ran $command" }
+        )
         assertTrue(executor.execute(Tools.WRITE_FILE,
             """{"path":"${session.planPath}","content":"execute"}""").contains("已写入"))
 
@@ -202,14 +217,52 @@ class PermissionRuntimeTest {
         exiting.await()
 
         assertEquals(PermissionMode.AUTO, conversation.permissionMode)
-        assertTrue(session.modePrompt().contains("显式目录范围仍生效"))
+        assertTrue(session.modePrompt().contains("文件工具仍受当前工作目录和额外目录的并集限制"))
         assertTrue(executor.execute(Tools.SAVE_MEMORY, """{"title":"x","content":"y"}""").contains("已保存记忆"))
         assertTrue(executor.execute(Tools.SAVE_SKILL,
             """{"name":"managed-skill","description":"x","content":"y"}""").contains("已成功保存"))
         assertTrue(executor.execute(Tools.USE_SKILL, """{"name":"managed-skill"}""").contains("y"))
-        assertTrue(executor.execute(Tools.RUN_COMMAND, """{"command":"pwd"}""")
-            .contains("shell 命令无法可靠限制在这些目录内"))
+        assertTrue(executor.execute(Tools.RUN_COMMAND, """{"command":"pwd"}""").contains("ran pwd"))
         assertTrue(executor.execute(Tools.WRITE_FILE, """{"path":"allowed/in.txt","content":"yes"}""").contains("已写入"))
+    }
+
+    @Test
+    fun `extra file directories do not block approved shell commands and mode tightening cancels them`() = runBlocking {
+        val shellDirectory = tmp.newFolder("shell-cwd").canonicalFile
+        val cwdJson = shellDirectory.path.replace("\\", "\\\\")
+        val allowed = File(store.workspaceFile("."), "allowed").apply { mkdirs() }
+        val coordinator = PermissionCoordinator()
+        val conversation = Conversation(allowedDirectories = listOf(allowed.canonicalPath))
+        var executedDirectory: String? = null
+        val executor = ToolExecutor(
+            store = store,
+            permissionSession = PermissionSession(store, conversation, coordinator),
+            commandExecutor = { _, cwd -> executedDirectory = cwd; "done" }
+        )
+
+        val approved = async { executor.execute(Tools.RUN_COMMAND, """{"command":"pwd","cwd":"$cwdJson"}""") }
+        val request = awaitPending(coordinator)
+        assertEquals(PermissionRequestKind.COMMAND, request.kind)
+        assertTrue(coordinator.resolve(request.id, PermissionDecision.ALLOW_ONCE))
+        assertEquals("done", approved.await())
+        assertEquals(shellDirectory.path, executedDirectory)
+
+        for (mode in listOf(PermissionMode.READONLY, PermissionMode.PLAN)) {
+            val tighteningCoordinator = PermissionCoordinator()
+            val tighteningConversation = Conversation(allowedDirectories = listOf(allowed.canonicalPath))
+            var executed = false
+            val tighteningExecutor = ToolExecutor(
+                store = store,
+                permissionSession = PermissionSession(store, tighteningConversation, tighteningCoordinator),
+                commandExecutor = { _, _ -> executed = true; "unexpected" }
+            )
+            val pending = async { tighteningExecutor.execute(Tools.RUN_COMMAND, """{"command":"pwd"}""") }
+            val pendingRequest = awaitPending(tighteningCoordinator)
+            tighteningConversation.permissionMode = mode
+            assertTrue(tighteningCoordinator.resolve(pendingRequest.id, PermissionDecision.ALLOW_ONCE))
+            assertTrue(pending.await().startsWith("错误:"))
+            assertFalse(executed)
+        }
     }
 
     @Test

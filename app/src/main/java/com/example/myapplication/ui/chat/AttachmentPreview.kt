@@ -175,9 +175,9 @@ internal fun AttachmentPreviewDialog(
                 .fillMaxWidth(0.96f)
                 .fillMaxHeight(0.9f),
             shape = MaterialTheme.shapes.large,
-            color = MaterialTheme.colorScheme.surface
+            color = MaterialTheme.colorScheme.background
         ) {
-            Column(Modifier.padding(16.dp)) {
+            Column(Modifier.padding(22.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically

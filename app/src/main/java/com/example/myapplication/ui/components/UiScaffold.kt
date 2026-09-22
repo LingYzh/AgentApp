@@ -1,7 +1,5 @@
 package com.example.myapplication.ui.components
 
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -12,7 +10,7 @@ import androidx.compose.ui.graphics.Color
 
 val LocalTransferFeedback = staticCompositionLocalOf<SnackbarHostState?> { null }
 
-/** Feedback participates in layout below the active app bar, never over the composer. */
+/** Feedback floats below the active app bar without resizing the reading area. */
 @Composable
 fun UiScaffold(
     modifier: Modifier = Modifier,
@@ -29,22 +27,22 @@ fun UiScaffold(
     val transferFeedback = LocalTransferFeedback.current
     Scaffold(
         modifier = modifier,
-        topBar = {
-            Column {
-                topBar()
-                // Only this feedback slot owns height animation; streaming content does not.
-                Box(Modifier.fillMaxWidth().animateContentSize(tween(200)), contentAlignment = Alignment.TopCenter) {
-                    if (transferFeedback?.currentSnackbarData != null) SnackbarHost(transferFeedback)
-                    else snackbarHost()
-                }
-            }
-        },
+        topBar = topBar,
         bottomBar = bottomBar,
         floatingActionButton = floatingActionButton,
         floatingActionButtonPosition = floatingActionButtonPosition,
         containerColor = containerColor,
         contentColor = contentColor,
         contentWindowInsets = contentWindowInsets,
-        content = content
+        content = { padding ->
+            Box(Modifier.fillMaxSize()) {
+                content(padding)
+                Box(Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                    .padding(top = padding.calculateTopPadding())) {
+                    if (transferFeedback?.currentSnackbarData != null) TopFeedbackHost(transferFeedback)
+                    else snackbarHost()
+                }
+            }
+        }
     )
 }

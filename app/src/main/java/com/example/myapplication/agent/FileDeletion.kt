@@ -6,13 +6,13 @@ import kotlinx.coroutines.ensureActive
 import java.io.File
 
 /** Single-file deletion only; no recursive walk or automatic retry after an approval. */
-internal class FileDeletion(private val session: PermissionSession, private val workspace: File) {
+internal class FileDeletion(private val session: PermissionSession) {
     private data class Target(val file: File, val bytes: Long, val modified: Long)
 
     private fun target(path: String): Target {
         session.toolBlockReason(Tools.DELETE_FILE)?.let { throw SecurityException(it) }
         session.canWritePath(path)?.let { throw SecurityException(it) }
-        val raw = File(path).let { if (it.isAbsolute) it else File(workspace, path) }
+        val raw = session.files.lexical(path)
         val file = session.files.resolve(path)
         val unlinked = File(requireNotNull(raw.parentFile).canonicalFile, raw.name)
         require(unlinked == file) { "删除工具不接受符号链接或特殊路径" }

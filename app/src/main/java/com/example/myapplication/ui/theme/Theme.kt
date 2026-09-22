@@ -13,7 +13,11 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 
 /**
  * AgentApp V3 语义配色；实心按钮始终白色前景，不使用壁纸动态色。
@@ -124,7 +128,20 @@ fun AgentTheme(
             surfaceContainerHigh = animatedToken(target.surfaceContainerHigh), surfaceContainerHighest = animatedToken(target.surfaceContainerHighest),
             surfaceVariant = animatedToken(target.surfaceVariant), onSurfaceVariant = animatedToken(target.onSurfaceVariant),
             error = animatedToken(target.error), errorContainer = animatedToken(target.errorContainer)),
-        typography = Typography().let { it.copy(bodyLarge = it.bodyLarge.copy(fontSize = 16.sp, lineHeight = 28.sp)) },
+        typography = Typography(
+            headlineLarge = TextStyle(fontFamily = FontFamily.Serif, fontSize = 32.sp, lineHeight = 48.sp),
+            headlineMedium = TextStyle(fontFamily = FontFamily.Serif, fontSize = 28.sp, lineHeight = 40.sp),
+            headlineSmall = TextStyle(fontFamily = FontFamily.Serif, fontSize = 28.sp, lineHeight = 40.sp),
+            titleLarge = TextStyle(fontSize = 18.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold),
+            titleMedium = TextStyle(fontSize = 16.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold),
+            titleSmall = TextStyle(fontSize = 14.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium),
+            bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 28.sp),
+            bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 24.sp),
+            bodySmall = TextStyle(fontSize = 12.sp, lineHeight = 18.sp),
+            labelLarge = TextStyle(fontSize = 13.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium),
+            labelMedium = TextStyle(fontSize = 12.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium),
+            labelSmall = TextStyle(fontSize = 11.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium)
+        ),
         shapes = AnthropicShapes,
         content = content
     )
@@ -132,3 +149,12 @@ fun AgentTheme(
 
 @Composable
 private fun animatedToken(target: Color): Color = animateColorAsState(target, tween(180), label = "theme token").value
+
+/** Shared code/output reading surface from the v3 tokens. */
+@Composable
+fun codeSurfaceColor(): Color = if (MaterialTheme.colorScheme.surface.luminance() < .5f)
+    Color(0xFF20201E) else Color(0xFFEEECE5)
+
+@Composable
+fun drawerActionColor(): Color = if (MaterialTheme.colorScheme.background.luminance() < .5f)
+    Color(0xFF514D46) else Color(0xFF3C3B35)

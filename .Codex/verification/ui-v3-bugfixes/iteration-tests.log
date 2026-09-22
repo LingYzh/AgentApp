@@ -1,0 +1,59 @@
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
+
+> Task :app:compileDebugKotlin
+w: file:///D:/StudioProjects/AgentApp/app/src/main/java/com/example/myapplication/ui/chat/ContextUsageUi.kt:222:119 'val Icons.Filled.KeyboardArrowRight: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.KeyboardArrowRight.
+w: file:///D:/StudioProjects/AgentApp/app/src/main/java/com/example/myapplication/ui/chat/ContextUsageUi.kt:319:95 'val Icons.Filled.ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack.
+w: file:///D:/StudioProjects/AgentApp/app/src/main/java/com/example/myapplication/ui/chat/DirectoryPicker.kt:86:69 'val Icons.Filled.ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack.
+
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:processDebugJavaRes
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:compileDebugUnitTestKotlin
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes UP-TO-DATE
+
+> Task :app:testDebugUnitTest
+
+FileDiffRegressionTest > failed write does not publish change FAILED
+    java.lang.AssertionError at FileDiffRegressionTest.kt:59
+
+PermissionRuntimeTest > scope rejects traversal outside configured canonical directory but not managed memory or skills FAILED
+    java.lang.AssertionError at PermissionRuntimeTest.kt:132
+
+PermissionRuntimeTest > plan accepted into auto retains explicit directory scope FAILED
+    java.lang.AssertionError at PermissionRuntimeTest.kt:187
+
+216 tests completed, 3 failed, 3 skipped
+
+> Task :app:testDebugUnitTest FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:testDebugUnitTest'.
+> There were failing tests. See the report at: file:///D:/StudioProjects/AgentApp/app/build/reports/tests/testDebugUnitTest/index.html
+
+22 actionable tasks: 6 executed, 16 up-to-date
+* Try:
+> Run with --scan to get full insights.
+
+BUILD FAILED in 27s

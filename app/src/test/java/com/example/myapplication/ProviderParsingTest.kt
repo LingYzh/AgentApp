@@ -71,6 +71,50 @@ class ProviderParsingTest {
         )
     }
 
+    @Test
+    fun `openai ignores null optional objects arrays and primitives`() {
+        val parser = OpenAiStreamParser()
+
+        val usageOnly = parser.parse(
+            """{"usage":{"prompt_tokens":4,"completion_tokens":0,"prompt_tokens_details":null,"completion_tokens_details":null},"choices":null}"""
+        )
+        val emptyDelta = parser.parse(
+            """{"choices":[{"finish_reason":null,"delta":null}]}"""
+        )
+        val text = parser.parse(
+            """{"usage":null,"choices":[{"finish_reason":null,"delta":{"content":"ok","reasoning_content":null,"tool_calls":null}}]}"""
+        )
+        val malformedToolEntry = parser.parse(
+            """{"choices":[{"finish_reason":"stop","delta":{"tool_calls":[null,{"index":null,"id":null,"function":null}]}}]}"""
+        )
+
+        assertEquals(listOf(StreamEvent.Usage(TokenUsage(4, 0))), usageOnly)
+        assertTrue(emptyDelta.isEmpty())
+        assertEquals(listOf(StreamEvent.Text("ok")), text)
+        assertTrue(malformedToolEntry.isEmpty())
+        assertEquals(listOf(StreamEvent.Done("stop")), parser.finish())
+    }
+
+    @Test
+    fun `openai null frame does not interrupt tool call fragments`() {
+        val parser = OpenAiStreamParser()
+
+        parser.parse(
+            """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"write_","arguments":"{\"path\":"}}]}}]}"""
+        )
+        assertTrue(parser.parse("""{"usage":null,"choices":null}""").isEmpty())
+        parser.parse(
+            """{"choices":[{"finish_reason":"tool_calls","delta":{"tool_calls":[{"index":0,"function":{"name":"file","arguments":"\"a.txt\"}"}}]}}]}"""
+        )
+
+        val events = parser.finish()
+        assertEquals(
+            StreamEvent.ToolCall("call_1", "write_file", "{\"path\":\"a.txt\"}"),
+            events.first()
+        )
+        assertEquals(StreamEvent.Done("tool_calls"), events.last())
+    }
+
     // ---------- Anthropic ----------
 
     @Test

@@ -1,9 +1,11 @@
 package com.example.myapplication.ui.providers
 
 import com.example.myapplication.ui.components.UiScaffold
+import com.example.myapplication.ui.components.PrototypeTextField
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,9 +21,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -30,33 +31,37 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import com.example.myapplication.ui.components.rememberListSelection
 import com.example.myapplication.ui.components.ListSelectionBar
+import com.example.myapplication.ui.components.ListPageHeader
 import kotlinx.coroutines.CancellationException
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
@@ -82,13 +87,8 @@ import com.example.myapplication.data.model.ChatMessage
 import com.example.myapplication.data.model.ProviderConfig
 import com.example.myapplication.data.model.ProviderType
 import com.example.myapplication.data.model.ModelCapabilities
-import com.example.myapplication.data.model.ReasoningEffort
 import com.example.myapplication.data.model.ReasoningProtocol
 import com.example.myapplication.data.model.anthropicThinkingProtocol
-import com.example.myapplication.data.model.reasoningSupportFor
-import com.example.myapplication.data.model.temperatureConflictFor
-import com.example.myapplication.provider.anthropicBudgetFor
-import com.example.myapplication.provider.geminiBudgetFor
 import com.example.myapplication.ui.theme.AgentTheme
 import com.example.myapplication.provider.StreamEvent
 import kotlinx.coroutines.Dispatchers
@@ -296,7 +296,19 @@ fun ProvidersContent(
     onDeleteSelected: (Set<String>) -> Unit = {},
     busy: Boolean = false
 ) {
+    var query by rememberSaveable { mutableStateOf("") }
     val selection = rememberListSelection(config.providers.map { it.id }, config.providers.associate { it.id to it.name.ifBlank { it.model } })
+    val normalizedQuery = query.trim()
+    val filteredProviders = remember(config.providers, normalizedQuery) {
+        config.providers.filter { provider ->
+            normalizedQuery.isBlank() || listOf(
+                provider.name,
+                provider.model,
+                provider.type.label,
+                provider.baseUrl
+            ).any { it.contains(normalizedQuery, ignoreCase = true) }
+        }
+    }
 
     UiScaffold(
         topBar = {
@@ -310,7 +322,7 @@ fun ProvidersContent(
                         enabled = !busy) { Text(if (selection.active) "完成" else "管理") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                 )
@@ -321,38 +333,44 @@ fun ProvidersContent(
                 ListSelectionBar(selection, busy, onDeleteSelected, onImport = onImport, onExport = onExportSelected)
             }
         },
-        floatingActionButton = {
-            if (!selection.active) {
-                FloatingActionButton(onClick = { if (!busy) onAddProvider() }) {
-                    Icon(Icons.Filled.Add, "添加")
-                }
-            }
-        }
     ) { padding ->
-        if (config.providers.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text(
-                    "还没有模型配置，点右下角添加\n支持 OpenAI 兼容 / Anthropic / Gemini / 自定义模板",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(32.dp)
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(
+                start = ExpressiveTokens.ScreenHorizontalPadding,
+                top = 8.dp,
+                end = ExpressiveTokens.ScreenHorizontalPadding,
+                bottom = if (selection.active) 16.dp else 24.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            item(key = "page-header") {
+                ListPageHeader(
+                    title = "模型配置",
+                    description = "选择默认连接，或点开配置调整模型。",
+                    query = query,
+                    onQueryChange = { query = it },
+                    searchPlaceholder = "搜索模型配置",
+                    actionLabel = if (selection.active || busy) null else "添加模型配置",
+                    onAction = if (selection.active || busy) null else onAddProvider
                 )
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(
-                    start = ExpressiveTokens.ScreenHorizontalPadding,
-                    top = 8.dp,
-                    end = ExpressiveTokens.ScreenHorizontalPadding,
-                    bottom = ExpressiveTokens.FabSafeBottomPadding
-                ),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(config.providers, key = { it.id }) { p ->
+            if (filteredProviders.isEmpty()) {
+                item(key = "empty-state") {
+                    Text(
+                        if (normalizedQuery.isBlank()) "还没有模型配置" else "没有匹配的模型配置",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            } else {
+                items(filteredProviders, key = { it.id }) { p ->
                     Card(
                         shape = ExpressiveTokens.CardShape,
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                            containerColor = MaterialTheme.colorScheme.surface
                         ),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         onClick = { if (!busy) {
@@ -473,7 +491,6 @@ fun ProviderEditContent(
     var model by remember { mutableStateOf(initialConfig?.model ?: "") }
     var temperature by remember { mutableStateOf(initialConfig?.temperature?.toString() ?: "") }
     var maxOutputTokens by remember { mutableStateOf(initialConfig?.maxOutputTokens?.toString() ?: "") }
-    var reasoningEffort by remember { mutableStateOf(initialConfig?.reasoningEffort) }
     var anthropicThinkingMode by remember {
         mutableStateOf(initialConfig?.anthropicThinkingMode ?: AnthropicThinkingMode.AUTO)
     }
@@ -491,8 +508,10 @@ fun ProviderEditContent(
     }
     var typeMenuExpanded by remember { mutableStateOf(false) }
     var modelMenuExpanded by remember { mutableStateOf(false) }
-    var reasoningMenuExpanded by remember { mutableStateOf(false) }
     var anthropicThinkingModeMenuExpanded by remember { mutableStateOf(false) }
+    var generationExpanded by rememberSaveable { mutableStateOf(false) }
+    var capabilitiesExpanded by rememberSaveable { mutableStateOf(false) }
+    var advancedExpanded by rememberSaveable { mutableStateOf(false) }
 
     val currentScope = capabilityScope(type, baseUrl, modelsUrl)
     val initialScope = initialConfig?.let { capabilityScope(it.type, it.baseUrl, it.modelsUrl) }
@@ -509,24 +528,15 @@ fun ProviderEditContent(
         else -> emptyMap()
     }
     val currentModelId = model.trim()
-    val reasoningSupport = reasoningSupportFor(type, currentModelId)
-    val selectedReasoning = when (type) {
-        ProviderType.OPENAI, ProviderType.ANTHROPIC -> reasoningEffort
-        else -> reasoningEffort?.takeIf { it in reasoningSupport.efforts }
+    val anthropicProtocol = if (type == ProviderType.ANTHROPIC) {
+        anthropicThinkingProtocol(currentModelId, anthropicThinkingMode)
+    } else {
+        null
     }
-    val anthropicProtocol = selectedReasoning
-        ?.takeIf { type == ProviderType.ANTHROPIC && it != ReasoningEffort.NONE }
-        ?.let { anthropicThinkingProtocol(currentModelId, anthropicThinkingMode) }
-    val temperatureConflict = temperatureConflictFor(type, currentModelId, selectedReasoning)
     val parsedMaxOutputTokens = maxOutputTokens.trim().toIntOrNull()
-    val manualThinkingBudget = selectedReasoning
-        ?.takeIf { anthropicProtocol == ReasoningProtocol.ANTHROPIC_MANUAL }
-        ?.let(::anthropicBudgetFor)
     val maxOutputTokensError = when {
         maxOutputTokens.isBlank() -> null
         parsedMaxOutputTokens == null || parsedMaxOutputTokens <= 0 -> "请输入大于 0 的整数。"
-        manualThinkingBudget != null && parsedMaxOutputTokens <= manualThinkingBudget ->
-            "手动 thinking 预算为 $manualThinkingBudget，最大输出必须更大。"
         else -> null
     }
     val currentOverride = capabilityOverrides[currentModelId]
@@ -546,9 +556,9 @@ fun ProviderEditContent(
         modelsUrl = modelsUrl.trim(),
         apiKey = apiKey.trim(),
         model = model.trim(),
-        temperature = temperature.toFloatOrNull().takeUnless { temperatureConflict != null },
+        temperature = temperature.toFloatOrNull(),
         maxOutputTokens = parsedMaxOutputTokens?.takeIf { it > 0 },
-        reasoningEffort = selectedReasoning,
+        reasoningEffort = null,
         anthropicThinkingMode = anthropicThinkingMode,
         customRequestTemplate = template,
         customResponsePath = responsePath.trim(),
@@ -575,15 +585,15 @@ fun ProviderEditContent(
                     }
                 },
                 actions = {
-                    IconButton(
+                    UiTextButton(
                         onClick = {
                         onSave(buildConfig())
                         },
                         enabled = maxOutputTokensError == null
-                    ) { Icon(Icons.Filled.Check, "保存") }
+                    ) { Text("保存") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
                     actionIconContentColor = MaterialTheme.colorScheme.onSurface
@@ -597,10 +607,10 @@ fun ProviderEditContent(
                 .padding(padding)
                 .imePadding()
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 22.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            OutlinedTextField(
+            PrototypeTextField(
                 name, { name = it }, Modifier.fillMaxWidth(),
                 label = { Text("名称") }, singleLine = true
             )
@@ -609,7 +619,7 @@ fun ProviderEditContent(
                 expanded = typeMenuExpanded,
                 onExpandedChange = { typeMenuExpanded = it }
             ) {
-                OutlinedTextField(
+                PrototypeTextField(
                     value = type.label,
                     onValueChange = {},
                     readOnly = true,
@@ -636,19 +646,12 @@ fun ProviderEditContent(
                 }
             }
 
-            OutlinedTextField(
+            PrototypeTextField(
                 baseUrl, { baseUrl = it }, Modifier.fillMaxWidth(),
                 label = { Text("Base URL") }, singleLine = true,
                 supportingText = { Text(baseUrlHint(type)) }
             )
-            if (type != ProviderType.CUSTOM) {
-                OutlinedTextField(
-                    modelsUrl, { modelsUrl = it }, Modifier.fillMaxWidth(),
-                    label = { Text("模型列表 URL（可选）") }, singleLine = true,
-                    supportingText = { Text("留空自动识别；DeepSeek 两种协议均使用 /models。特殊网关可填完整地址。") }
-                )
-            }
-            OutlinedTextField(
+            PrototypeTextField(
                 apiKey, { apiKey = it }, Modifier.fillMaxWidth(),
                 label = { Text("API Key") }, singleLine = true,
                 visualTransformation = PasswordVisualTransformation()
@@ -658,7 +661,7 @@ fun ProviderEditContent(
                 expanded = modelMenuExpanded,
                 onExpandedChange = { modelMenuExpanded = it }
             ) {
-                OutlinedTextField(
+                PrototypeTextField(
                     value = model,
                     onValueChange = { model = it },
                     label = { Text("模型名（可输入或从下拉选择）") },
@@ -678,8 +681,54 @@ fun ProviderEditContent(
                     }
                 }
             }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { onFetchModels(buildConfig()) },
+                    enabled = !fetchingModels && type != ProviderType.CUSTOM && baseUrl.isNotBlank()
+                ) {
+                    if (fetchingModels) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text("获取模型列表")
+                    }
+                }
+                Button(
+                    onClick = { onTest(buildConfig()) },
+                    enabled = !testing && maxOutputTokensError == null && baseUrl.isNotBlank() && model.isNotBlank()
+                ) {
+                    if (testing) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text("测试连接")
+                    }
+                }
+            }
+            if (modelCandidates.isNotEmpty()) {
+                Text(
+                    "${modelCandidates.size} 个模型可选",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            fetchError?.let {
+                Text(
+                    "❌ $it", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+
+            ProviderExpandableSection(
+                title = "模型能力与上下文",
+                description = "刷新模型列表不会覆盖当前模型的手动能力与上下文设置。",
+                expanded = capabilitiesExpanded,
+                onExpandedChange = { capabilitiesExpanded = it }
+            ) {
             if (currentModelId.isNotBlank()) {
-                OutlinedTextField(
+                PrototypeTextField(
                     value = contextWindowOverrides[currentModelId]?.toString().orEmpty(),
                     onValueChange = { value ->
                         val trimmed = value.trim()
@@ -696,33 +745,6 @@ fun ProviderEditContent(
                     singleLine = true
                 )
             }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { onFetchModels(buildConfig()) },
-                    enabled = !fetchingModels && type != ProviderType.CUSTOM && baseUrl.isNotBlank()
-                ) {
-                    if (fetchingModels) CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp), strokeWidth = 2.dp
-                    ) else Text("获取模型列表")
-                }
-                if (modelCandidates.isNotEmpty()) {
-                    Text(
-                        "${modelCandidates.size} 个模型可选",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            fetchError?.let {
-                Text(
-                    "❌ $it", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
-
             if (currentModelId.isNotBlank() && type != ProviderType.CUSTOM) {
                 Text("当前模型能力", style = MaterialTheme.typography.titleSmall)
                 Text(
@@ -764,15 +786,21 @@ fun ProviderEditContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            }
 
-            OutlinedTextField(
+            ProviderExpandableSection(
+                title = "生成参数",
+                description = "留空表示不发送可选参数，保持协议本身的默认行为。",
+                expanded = generationExpanded,
+                onExpandedChange = { generationExpanded = it }
+            ) {
+            PrototypeTextField(
                 temperature, { temperature = it }, Modifier.fillMaxWidth(),
-                label = { Text(temperatureConflict?.let { "温度（当前组合不可用）" } ?: "温度（可留空）") },
-                singleLine = true,
-                enabled = temperatureConflict == null
+                label = { Text("温度（可留空）") },
+                singleLine = true
             )
             if (type != ProviderType.CUSTOM) {
-                OutlinedTextField(
+                PrototypeTextField(
                     maxOutputTokens,
                     { maxOutputTokens = it },
                     Modifier.fillMaxWidth(),
@@ -794,117 +822,64 @@ fun ProviderEditContent(
                     Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
             }
-            if (type != ProviderType.CUSTOM) {
-                Text("思考强度", style = MaterialTheme.typography.titleSmall)
+            if (type == ProviderType.ANTHROPIC) {
+                Text("Claude thinking 协议", style = MaterialTheme.typography.titleSmall)
                 ExposedDropdownMenuBox(
-                    expanded = reasoningMenuExpanded,
-                    onExpandedChange = {
-                        if (reasoningSupport.efforts.isNotEmpty()) reasoningMenuExpanded = it
-                    }
+                    expanded = anthropicThinkingModeMenuExpanded,
+                    onExpandedChange = { anthropicThinkingModeMenuExpanded = it }
                 ) {
-                    OutlinedTextField(
-                        value = selectedReasoning?.let { "${it.wireValue}（${it.label}）" } ?: "默认（不发送参数）",
+                    PrototypeTextField(
+                        value = anthropicThinkingMode.label,
                         onValueChange = {},
                         readOnly = true,
-                        enabled = reasoningSupport.efforts.isNotEmpty(),
-                        label = { Text("思考强度（可选）") },
+                        label = { Text("Claude thinking 模式") },
                         trailingIcon = {
-                            ExposedDropdownMenuDefaults.TrailingIcon(reasoningMenuExpanded)
+                            ExposedDropdownMenuDefaults.TrailingIcon(anthropicThinkingModeMenuExpanded)
                         },
                         modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)
                     )
                     ExposedDropdownMenu(
-                        expanded = reasoningMenuExpanded,
-                        onDismissRequest = { reasoningMenuExpanded = false }
+                        expanded = anthropicThinkingModeMenuExpanded,
+                        onDismissRequest = { anthropicThinkingModeMenuExpanded = false }
                     ) {
-                        DropdownMenuItem(
-                            text = { Text("默认（不发送参数）") },
-                            onClick = { reasoningEffort = null; reasoningMenuExpanded = false }
-                        )
-                        reasoningSupport.efforts.forEach { effort ->
+                        AnthropicThinkingMode.entries.forEach { mode ->
                             DropdownMenuItem(
-                                text = { Text("${effort.wireValue}（${effort.label}）") },
-                                onClick = { reasoningEffort = effort; reasoningMenuExpanded = false }
+                                text = { Text(mode.label) },
+                                onClick = {
+                                    anthropicThinkingMode = mode
+                                    anthropicThinkingModeMenuExpanded = false
+                                }
                             )
                         }
                     }
                 }
                 Text(
-                    reasoningSupport.description,
+                    if (anthropicProtocol == ReasoningProtocol.ANTHROPIC_MANUAL) {
+                        "会话选择思考档位后，此模型使用固定 thinking token 预算。"
+                    } else {
+                        "会话选择思考档位后，此模型发送 adaptive thinking 与 output_config.effort。"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (type == ProviderType.ANTHROPIC) {
-                    ExposedDropdownMenuBox(
-                        expanded = anthropicThinkingModeMenuExpanded,
-                        onExpandedChange = { anthropicThinkingModeMenuExpanded = it }
-                    ) {
-                        OutlinedTextField(
-                            value = anthropicThinkingMode.label,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Claude thinking 模式") },
-                            trailingIcon = {
-                                ExposedDropdownMenuDefaults.TrailingIcon(anthropicThinkingModeMenuExpanded)
-                            },
-                            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)
-                        )
-                        ExposedDropdownMenu(
-                            expanded = anthropicThinkingModeMenuExpanded,
-                            onDismissRequest = { anthropicThinkingModeMenuExpanded = false }
-                        ) {
-                            AnthropicThinkingMode.entries.forEach { mode ->
-                                DropdownMenuItem(
-                                    text = { Text(mode.label) },
-                                    onClick = {
-                                        anthropicThinkingMode = mode
-                                        anthropicThinkingModeMenuExpanded = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    Text(
-                        when {
-                            selectedReasoning == null -> "默认不发送 thinking 参数。"
-                            selectedReasoning == ReasoningEffort.NONE -> "关闭时发送 thinking.disabled，不发送 effort。"
-                            anthropicProtocol == ReasoningProtocol.ANTHROPIC_MANUAL -> "此模型将使用固定 thinking token 预算。"
-                            else -> "此模型将发送 adaptive thinking 与 output_config.effort。"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                if (reasoningEffort != null && selectedReasoning == null) {
-                    Text(
-                        "已保存的思考强度不适用于当前模型；保存时会移除，且本次不会发送。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-                if (selectedReasoning != null && anthropicProtocol == ReasoningProtocol.ANTHROPIC_MANUAL) {
-                    Text(
-                        "此档位会请求 ${anthropicBudgetFor(selectedReasoning)} 个 thinking tokens；max_tokens 必须比该预算大。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                if (selectedReasoning != null && reasoningSupport.protocol == ReasoningProtocol.GEMINI_THINKING_BUDGET) {
-                    Text(
-                        "此档位会发送 thinkingBudget=${geminiBudgetFor(currentModelId, selectedReasoning)}。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                temperatureConflict?.let { conflict ->
-                    Text(
-                        "$conflict 保存时将不发送温度。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
             }
-            OutlinedTextField(
+            }
+            ProviderExpandableSection(
+                title = "高级连接设置",
+                description = "附加请求头和自定义模板仅在保存后用于此配置。",
+                expanded = advancedExpanded,
+                onExpandedChange = { advancedExpanded = it }
+            ) {
+            if (type != ProviderType.CUSTOM) {
+                PrototypeTextField(
+                    modelsUrl, { modelsUrl = it }, Modifier.fillMaxWidth(),
+                    label = { Text("模型列表 URL（可选）") }, singleLine = true,
+                    supportingText = {
+                        Text("留空自动识别；DeepSeek 两种协议均使用 /models。特殊网关可填完整地址。")
+                    }
+                )
+            }
+            PrototypeTextField(
                 headers, { headers = it }, Modifier.fillMaxWidth(),
                 label = { Text("附加请求头（每行一个 Key: Value，可留空）") }, minLines = 1, maxLines = 4
             )
@@ -916,32 +891,21 @@ fun ProviderEditContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                OutlinedTextField(
+                PrototypeTextField(
                     template, { template = it }, Modifier.fillMaxWidth(),
                     label = { Text("请求体模板（JSON）") }, minLines = 4, maxLines = 8
                 )
-                OutlinedTextField(
+                PrototypeTextField(
                     responsePath, { responsePath = it }, Modifier.fillMaxWidth(),
                     label = { Text("非流式响应提取路径，如 $.choices[0].message.content") }, singleLine = true
                 )
-                OutlinedTextField(
+                PrototypeTextField(
                     streamPath, { streamPath = it }, Modifier.fillMaxWidth(),
                     label = { Text("SSE 行提取路径，如 $.choices[0].delta.content") }, singleLine = true
                 )
             }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(
-                    onClick = { onTest(buildConfig()) },
-                    enabled = !testing && maxOutputTokensError == null && baseUrl.isNotBlank() && model.isNotBlank()
-                ) {
-                    if (testing) CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp
-                    )
-                    else Text("测试连接")
-                }
             }
+
             testResult?.let {
                 Card(
                     shape = ExpressiveTokens.CardShape,
@@ -954,7 +918,7 @@ fun ProviderEditContent(
                     Text(it, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
                 }
             }
-            Spacer(modifier = Modifier.height(ExpressiveTokens.FabSafeBottomPadding))
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
@@ -969,6 +933,48 @@ private fun CapabilityToggleRow(
     Row(verticalAlignment = Alignment.CenterVertically) {
         Checkbox(checked = checked, onCheckedChange = { onClick() }, enabled = enabled)
         Text(label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun ProviderExpandableSection(
+    title: String,
+    description: String,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column {
+            Row(
+                Modifier.fillMaxWidth().clickable { onExpandedChange(!expanded) }
+                    .padding(horizontal = 14.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleSmall)
+                    Text(description, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Icon(
+                    Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "收起$title" else "展开$title",
+                    modifier = if (expanded) Modifier else Modifier.graphicsLayer { rotationZ = -90f }
+                )
+            }
+            if (expanded) {
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    content = content
+                )
+            }
+        }
     }
 }
 

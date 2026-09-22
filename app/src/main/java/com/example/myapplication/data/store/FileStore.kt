@@ -5,6 +5,7 @@ import com.example.myapplication.data.model.AppConfig
 import com.example.myapplication.data.model.Conversation
 import com.example.myapplication.data.model.DefaultAgents
 import com.example.myapplication.data.model.MemoryEntry
+import com.example.myapplication.data.model.NewChatDefaults
 import com.example.myapplication.data.model.SkillMeta
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -39,6 +40,8 @@ class FileStore(private val root: File) {
     val workspaceDir = File(root, "workspace")
     val backupsDir = File(root, "backups")
     val avatarsDir = File(root, "avatars")
+    private var cachedNewChatDefaults: NewChatDefaults? = null
+    private val newChatDefaultsFile = File(root, "new-chat-defaults.json")
 
     init {
         init()
@@ -46,6 +49,7 @@ class FileStore(private val root: File) {
 
     /** 确保目录结构存在（导入备份后也可调用重建） */
     fun init() {
+        synchronized(this) { cachedNewChatDefaults = null }
         conversationsDir.mkdirs()
         memoryDir.mkdirs()
         skillsDir.mkdirs()
@@ -123,6 +127,23 @@ class FileStore(private val root: File) {
 
     fun saveConfig(config: AppConfig) {
         configFile.writeText(json.encodeToString(config))
+    }
+
+    @Synchronized
+    fun loadNewChatDefaults(): NewChatDefaults = cachedNewChatDefaults ?: runCatching {
+        json.decodeFromString<NewChatDefaults>(newChatDefaultsFile.readText())
+    }.getOrDefault(NewChatDefaults()).also { cachedNewChatDefaults = it }
+
+    /** Publish before scheduling disk IO so a immediately opened draft sees the latest selection. */
+    @Synchronized
+    fun rememberNewChatDefaults(defaults: NewChatDefaults) {
+        cachedNewChatDefaults = defaults
+    }
+
+    /** Writes the latest snapshot, so older queued writes can never restore stale preferences. */
+    @Synchronized
+    fun flushNewChatDefaults() {
+        cachedNewChatDefaults?.let { writeManagedFile(newChatDefaultsFile, json.encodeToString(it)) }
     }
 
     // ---------- Agent 配置 ----------

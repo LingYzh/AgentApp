@@ -53,18 +53,18 @@ object Tools {
     val ALL: List<ToolSpec> = listOf(
         ToolSpec(
             WRITE_FILE,
-            "在工作区写入（创建或覆盖）一个文本文件。用于生成代码、文档、数据文件等。实际权限由运行时模式、目录范围和计划文件边界强制检查。",
-            props("path" to "相对工作区的文件路径，如 notes/todo.md", "content" to "完整文件内容", required = listOf("path", "content"))
+            "在当前工作目录写入（创建或覆盖）一个文本文件。用于生成代码、文档、数据文件等。实际权限由运行时模式、目录范围和计划文件边界强制检查。",
+            props("path" to "相对当前工作目录的文件路径，如 notes/todo.md", "content" to "完整文件内容", required = listOf("path", "content"))
         ),
         ToolSpec(
             READ_FILE,
-            "读取工作区文件。文本直接返回；图片和 PDF 在当前模型支持对应能力时作为原生多模态内容提供。",
-            props("path" to "相对工作区的文件路径", required = listOf("path"))
+            "读取当前工作目录中的文件。文本直接返回；图片和 PDF 在当前模型支持对应能力时作为原生多模态内容提供。",
+            props("path" to "相对当前工作目录的文件路径", required = listOf("path"))
         ),
         ToolSpec(
             LIST_FILES,
-            "列出工作区中的文件（相对路径列表）。",
-            props("path" to "可选，子目录路径；留空列出全部", required = emptyList())
+            "列出当前工作目录中的文件（相对路径列表）。",
+            props("path" to "可选，子目录路径；留空列出当前工作目录", required = emptyList())
         ),
         ToolSpec(
             SAVE_MEMORY,
@@ -110,7 +110,7 @@ object Tools {
         ),
         ToolSpec(
             EDIT_FILE,
-            "在一个文本文件中精确替换唯一出现的 old_text。适合小范围编辑；路径可为工作区相对路径或已授权的绝对路径。实际权限由运行时模式、目录范围和计划文件边界强制检查。",
+            "在一个文本文件中精确替换唯一出现的 old_text。适合小范围编辑；路径可为当前工作目录相对路径或已授权的绝对路径。实际权限由运行时模式、目录范围和计划文件边界强制检查。",
             props(
                 "path" to "文件路径",
                 "old_text" to "当前文件中唯一存在的原文",
@@ -121,12 +121,12 @@ object Tools {
         ToolSpec(
             DELETE_FILE,
             "删除一个普通文件，不支持目录、递归删除或符号链接。Readonly/Plan 禁止；Accept Edit 每次需用户确认；Auto 仍受目录范围和 Android 系统权限限制。",
-            props("path" to "要永久删除的单个文件路径（工作区相对路径或绝对路径）", required = listOf("path"))
+            props("path" to "要永久删除的单个文件路径（当前工作目录相对路径或绝对路径）", required = listOf("path"))
         ),
         ToolSpec(
             RUN_COMMAND,
-            "在本应用 UID 权限内通过 /system/bin/sh 执行一条命令。每次执行均受当前权限模式、目录范围和用户审批约束。",
-            props("command" to "要执行的 shell 命令", "cwd" to "可选工作目录（默认工作区）", required = listOf("command"))
+            "在本应用 UID 权限内通过 /system/bin/sh 执行一条命令。每次执行受当前权限模式和用户审批约束；文件工具目录范围不约束 shell，shell 仍受 Android 权限且不提供目录沙箱。",
+            props("command" to "要执行的 shell 命令", "cwd" to "可选工作目录（默认当前工作目录）", required = listOf("command"))
         ),
         ToolSpec(
             ENTER_PLAN_MODE,
@@ -144,9 +144,9 @@ object Tools {
         includePlanControls || spec.name !in setOf(ENTER_PLAN_MODE, EXIT_PLAN_MODE)
     }.map { spec ->
         when (spec.name) {
-            WRITE_FILE -> spec.copy(description = "写入文本文件。相对路径位于工作区；也可使用已授权的绝对路径。计划模式仅可写入 $planPath。实际权限由运行时模式、目录范围和计划文件边界强制检查。")
-            READ_FILE -> spec.copy(description = "读取文本、图片或 PDF。路径可为工作区相对路径或已授权的绝对路径。")
-            LIST_FILES -> spec.copy(description = "递归列出文件，结果有数量上限。路径可为工作区相对路径或已授权的绝对路径。")
+            WRITE_FILE -> spec.copy(description = "写入文本文件。相对路径位于当前工作目录；也可使用已授权的绝对路径。计划模式仅可写入 $planPath。实际权限由运行时模式、目录范围和计划文件边界强制检查。")
+            READ_FILE -> spec.copy(description = "读取文本、图片或 PDF。路径可为当前工作目录相对路径或已授权的绝对路径。")
+            LIST_FILES -> spec.copy(description = "递归列出文件，结果有数量上限。路径可为当前工作目录相对路径或已授权的绝对路径。")
             ENTER_PLAN_MODE -> spec.copy(description = "主代理进入计划模式；计划文件固定为 $planPath，子代理被硬性禁止。")
             EXIT_PLAN_MODE -> spec.copy(description = "主代理提交 $planPath 的当前内容给用户审批；子代理被硬性禁止。")
             else -> spec

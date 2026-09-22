@@ -6,6 +6,7 @@ import com.example.myapplication.data.model.Conversation
 import com.example.myapplication.data.model.ModelResolver
 import com.example.myapplication.data.model.ProviderConfig
 import com.example.myapplication.data.model.ProviderType
+import com.example.myapplication.data.model.ReasoningEffort
 import com.example.myapplication.data.model.contextWindowFor
 import com.example.myapplication.provider.ModelFetcher
 import org.junit.Assert.assertEquals
@@ -55,6 +56,18 @@ class ModelResolverTest {
     fun `no providers returns null`() {
         val resolved = ModelResolver.resolve(Conversation(), AppConfig(), emptyList())
         assertNull(resolved)
+    }
+
+    @Test
+    fun `resolved conversation ignores stored provider reasoning strength`() {
+        val stored = p1.copy(reasoningEffort = ReasoningEffort.MAX)
+        val resolved = ModelResolver.resolve(
+            Conversation(reasoningEffortOverride = null),
+            AppConfig(providers = listOf(stored), selectedProviderId = stored.id),
+            emptyList()
+        )!!
+
+        assertEquals(ReasoningEffort.MEDIUM, resolved.reasoningEffort)
     }
 }
 

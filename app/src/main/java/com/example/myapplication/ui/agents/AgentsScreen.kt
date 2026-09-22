@@ -1,6 +1,10 @@
 package com.example.myapplication.ui.agents
 
+import com.example.myapplication.ui.chat.showHomeChat
+
 import com.example.myapplication.ui.components.UiScaffold
+import com.example.myapplication.ui.components.FormSection
+import com.example.myapplication.ui.components.PrototypeTextField
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,9 +29,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
@@ -42,7 +44,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,6 +52,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.material3.TopAppBar
@@ -60,11 +62,13 @@ import androidx.compose.ui.unit.sp
 import com.example.myapplication.agent.Tools
 import com.example.myapplication.ui.components.rememberListSelection
 import com.example.myapplication.ui.components.ListSelectionBar
+import com.example.myapplication.ui.components.ListPageHeader
 import kotlinx.coroutines.CancellationException
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -209,7 +213,7 @@ fun AgentsScreen(navController: NavHostController, openDrawer: () -> Unit) {
             onOpenDrawer = openDrawer,
             onNewAgent = { navController.safeNavigateDirect(Routes.agentEdit("new")) },
             onSelectAgent = { id -> navController.safeNavigateDirect(Routes.agentEdit(id)) },
-            onStartAgent = { id -> navController.safeNavigateDirect(Routes.newChat(id)) },
+            onStartAgent = { id -> navController.showHomeChat(agentId = id) },
             onDeleteAgent = { id -> vm.delete(id) },
             onResetToDefaults = { vm.resetToDefaults() },
             onImport = actions.onImport,
@@ -240,7 +244,15 @@ fun AgentsContent(
     busy: Boolean = false,
     onStartAgent: (String) -> Unit = {}
 ) {
+    var query by rememberSaveable { mutableStateOf("") }
     val selection = rememberListSelection(agents.map { it.id }, agents.associate { it.id to it.name })
+    val normalizedQuery = query.trim()
+    val filteredAgents = remember(agents, normalizedQuery, modelLabel) {
+        agents.filter { agent ->
+            normalizedQuery.isBlank() || listOf(agent.name, agent.description, modelLabel(agent))
+                .any { it.contains(normalizedQuery, ignoreCase = true) }
+        }
+    }
 
     UiScaffold(
         topBar = {
@@ -259,7 +271,7 @@ fun AgentsContent(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                 )
@@ -270,53 +282,67 @@ fun AgentsContent(
                 ListSelectionBar(selection, busy, onDeleteSelected, onImport = onImport, onExport = onExportSelected)
             }
         },
-        floatingActionButton = {
-            if (!selection.active) {
-                FloatingActionButton(onClick = { if (!busy) onNewAgent() }) {
-                    Icon(Icons.Filled.Add, "新建 Agent")
-                }
-            }
-        }
     ) { padding ->
-        if (loading) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                androidx.compose.material3.CircularProgressIndicator()
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(
+                start = ExpressiveTokens.ScreenHorizontalPadding,
+                top = 8.dp,
+                end = ExpressiveTokens.ScreenHorizontalPadding,
+                bottom = if (selection.active) 16.dp else 24.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            item(key = "page-header") {
+                ListPageHeader(
+                    title = "Agents",
+                    description = "管理智能体，选择一个开始新的工作。",
+                    query = query,
+                    onQueryChange = { query = it },
+                    searchPlaceholder = "搜索 Agent",
+                    actionLabel = if (selection.active || busy) null else "新建 Agent",
+                    onAction = if (selection.active || busy) null else onNewAgent
+                )
             }
-        } else if (agents.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.padding(32.dp)
-                ) {
-                    Text(
-                        "暂无 Agent。可点击右下角新建，或一键载入官方预设。",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
-                    OutlinedButton(onClick = onResetToDefaults, enabled = !busy) {
-                        Icon(Icons.Filled.AutoAwesome, null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("载入默认预设")
+            if (loading) {
+                item(key = "loading") {
+                    Box(Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
+                        androidx.compose.material3.CircularProgressIndicator()
                     }
                 }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(
-                    start = ExpressiveTokens.ScreenHorizontalPadding,
-                    top = 8.dp,
-                    end = ExpressiveTokens.ScreenHorizontalPadding,
-                    bottom = ExpressiveTokens.FabSafeBottomPadding
-                ),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(agents, key = { it.id }) { agent ->
+            } else if (filteredAgents.isEmpty()) {
+                item(key = "empty-state") {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 44.dp)
+                    ) {
+                        Text(
+                            if (normalizedQuery.isBlank()) "暂无 Agent" else "没有匹配的 Agent",
+                            color = MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.titleMedium,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            if (normalizedQuery.isBlank()) "可以新建 Agent，或载入官方预设。" else "换个关键词试试。",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        if (normalizedQuery.isBlank()) {
+                            OutlinedButton(onClick = onResetToDefaults, enabled = !busy) {
+                                Icon(Icons.Filled.AutoAwesome, null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("载入默认预设")
+                            }
+                        }
+                    }
+                }
+            } else {
+                items(filteredAgents, key = { it.id }) { agent ->
                     Card(
                         shape = ExpressiveTokens.CardShape,
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                            containerColor = MaterialTheme.colorScheme.surface
                         ),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         onClick = { if (!busy) {
@@ -414,8 +440,9 @@ fun AgentEditContent(
     var emoji by remember { mutableStateOf(initialAgent?.emoji ?: "🤖") }
     var avatarPath by remember { mutableStateOf(initialAgent?.avatarPath) }
     var showEmojiPicker by remember { mutableStateOf(false) }
+    var allowAllTools by remember { mutableStateOf(initialAgent?.tools.isNullOrEmpty()) }
     var selectedTools by remember {
-        mutableStateOf((initialAgent?.tools?.ifEmpty { Tools.ALL_NAMES } ?: Tools.ALL_NAMES).toSet())
+        mutableStateOf(initialAgent?.tools?.takeIf { it.isNotEmpty() }?.toSet() ?: Tools.ALL_NAMES)
     }
     var description by remember { mutableStateOf(initialAgent?.description ?: "") }
     var systemPrompt by remember { mutableStateOf(initialAgent?.systemPrompt ?: "") }
@@ -454,7 +481,7 @@ fun AgentEditContent(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
+                    UiTextButton(onClick = {
                         if (name.isNotBlank()) {
                             onSave(
                                 AgentProfile(
@@ -462,7 +489,7 @@ fun AgentEditContent(
                                     name = name.trim(),
                                     emoji = emoji.trim().ifBlank { "🤖" },
                                     avatarPath = avatarPath,
-                                    tools = selectedTools.toList(),
+                                    tools = if (allowAllTools) emptyList() else selectedTools.toList(),
                                     description = description.trim(),
                                     systemPrompt = systemPrompt.trim(),
                                     providerId = providerId,
@@ -470,10 +497,10 @@ fun AgentEditContent(
                                 )
                             )
                         }
-                    }) { Icon(Icons.Filled.Check, "保存") }
+                    }) { Text("保存") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
                     actionIconContentColor = MaterialTheme.colorScheme.onSurface
@@ -487,34 +514,21 @@ fun AgentEditContent(
                 .padding(padding)
                 .imePadding()
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 22.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 头像与自定义图片卡片
-            Card(
-                shape = ExpressiveTokens.CardShape,
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                ),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.fillMaxWidth()
+            Column(
+                Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(9.dp)
             ) {
-                Row(
-                    Modifier.fillMaxWidth().padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
                     AgentAvatar(
                         emoji = emoji,
                         avatarPath = avatarPath,
-                        size = 56.dp,
+                        size = 72.dp,
                         modifier = Modifier.clickable { showEmojiPicker = true }
                     )
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
                                 onClick = { imagePickerLauncher.launch("image/*") }
                             ) {
@@ -542,48 +556,34 @@ fun AgentEditContent(
                                 }
                             }
                         }
-                        Text(
-                            text = if (avatarPath != null) "已使用自选相册图片（优先展示）" else "支持 Emoji 挑选与相册图片双模态",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                    Text(
+                        text = if (avatarPath != null) "已使用自选相册图片（优先展示）" else "可选择 Emoji 或相册图片",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
             }
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    onClick = { showEmojiPicker = true },
-                    shape = ExpressiveTokens.CardShape,
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier.size(56.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(emoji, fontSize = 26.sp)
-                    }
-                }
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    modifier = Modifier.weight(1f),
-                    label = { Text("名称") },
-                    singleLine = true
-                )
-            }
-            OutlinedTextField(
-                description, { description = it }, Modifier.fillMaxWidth(),
-                label = { Text("描述") }, singleLine = true
+            PrototypeTextField(name, { name = it }, Modifier.fillMaxWidth(),
+                label = { Text("名称") }, singleLine = true)
+            PrototypeTextField(description, { description = it }, Modifier.fillMaxWidth(),
+                label = { Text("一句话介绍") }, singleLine = true)
+
+            PrototypeTextField(
+                systemPrompt, { systemPrompt = it }, Modifier.fillMaxWidth(),
+                label = { Text("系统提示词") },
+                supportingText = { Text("仅定义助手行为，工具执行仍受应用权限边界约束。") },
+                minLines = 8, maxLines = 16
             )
 
+            FormSection(
+                title = "默认模型",
+                description = "会话中的模型选择可以覆盖这里。"
+            ) {
             ExposedDropdownMenuBox(
                 expanded = providerMenuExpanded,
                 onExpandedChange = { providerMenuExpanded = it }
             ) {
-                OutlinedTextField(
+                PrototypeTextField(
                     value = providerLabel,
                     onValueChange = {},
                     readOnly = true,
@@ -617,7 +617,7 @@ fun AgentEditContent(
                     expanded = modelMenuExpanded,
                     onExpandedChange = { modelMenuExpanded = it }
                 ) {
-                    OutlinedTextField(
+                    PrototypeTextField(
                         value = model ?: selectedProvider.model,
                         onValueChange = {},
                         readOnly = true,
@@ -639,12 +639,49 @@ fun AgentEditContent(
                 }
             }
 
-            OutlinedTextField(
-                systemPrompt, { systemPrompt = it }, Modifier.fillMaxWidth(),
-                label = { Text("系统提示词（定义这个 Agent 的人设与行为）") },
-                minLines = 8, maxLines = 16
-            )
+            }
 
+            FormSection(
+                title = "工具授权",
+                description = "选择此 Agent 可使用的工具。"
+            ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        allowAllTools = !allowAllTools
+                        if (!allowAllTools && selectedTools.isEmpty()) {
+                            selectedTools = Tools.ALL_NAMES.toSet()
+                        }
+                    }
+                    .padding(vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("允许全部工具", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "包含当前及后续新增的工具",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = allowAllTools,
+                    onCheckedChange = { enabled ->
+                        allowAllTools = enabled
+                        if (!enabled && selectedTools.isEmpty()) {
+                            selectedTools = Tools.ALL_NAMES.toSet()
+                        }
+                    }
+                )
+            }
+            if (allowAllTools) {
+                Text(
+                    "实际执行时仍检查会话权限、目录范围和 Android 权限。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
             // 可用工具集配置卡片
             Card(
                 shape = ExpressiveTokens.CardShape,
@@ -677,11 +714,11 @@ fun AgentEditContent(
                                 }
                             )
                             Text(
-                                "清空",
+                                "允许全部",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.outline,
                                 modifier = Modifier.clickable {
-                                    selectedTools = emptySet()
+                                    allowAllTools = true
                                 }
                             )
                         }
@@ -716,7 +753,11 @@ fun AgentEditContent(
                                 .fillMaxWidth()
                                 .clip(ExpressiveTokens.CardShape)
                                 .clickable {
-                                    selectedTools = if (isChecked) selectedTools - toolName else selectedTools + toolName
+                                    selectedTools = when {
+                                        !isChecked -> selectedTools + toolName
+                                        selectedTools.size > 1 -> selectedTools - toolName
+                                        else -> selectedTools
+                                    }
                                 }
                                 .padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -724,7 +765,11 @@ fun AgentEditContent(
                             Checkbox(
                                 checked = isChecked,
                                 onCheckedChange = { checked ->
-                                    selectedTools = if (checked) selectedTools + toolName else selectedTools - toolName
+                                    selectedTools = when {
+                                        checked -> selectedTools + toolName
+                                        selectedTools.size > 1 -> selectedTools - toolName
+                                        else -> selectedTools
+                                    }
                                 }
                             )
                             Column(Modifier.padding(start = 4.dp)) {
@@ -741,8 +786,10 @@ fun AgentEditContent(
                     }
                 }
             }
+            }
+            }
 
-            Spacer(modifier = Modifier.height(ExpressiveTokens.FabSafeBottomPadding))
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 

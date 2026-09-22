@@ -34,8 +34,8 @@ private fun ChatVisualPreview(@PreviewParameter(ChatVisualStates::class) state: 
                 "drawer" -> Box(Modifier.fillMaxWidth(.86f)) { AppDrawerSheetContent(null, {},
                     listOf(Conversation(title = "一段已保存的会话"))) }
                 "model" -> ModelPicker(listOf(provider to provider.model), { _, _ -> }, onDismiss = {})
-                "permissions" -> SessionPermissionsDialog(PermissionMode.ACCEPT_EDIT, emptyList(), {}, { _, _ -> })
-                "reasoning" -> ReasoningEffortMenu(support, null, ReasoningEffort.MEDIUM, true, {}, initiallyExpanded = true)
+                "permissions" -> SessionPermissionsDialog(PermissionMode.ACCEPT_EDIT, emptyList(), null, "/workspace", {}, { _, _, _ -> null })
+                "reasoning" -> ReasoningEffortMenu(support, ReasoningEffort.MEDIUM, true, {}, initiallyExpanded = true)
                 "context" -> ContextUsageSheet(null, false, null, false, {}, {}, {})
                 else -> ChatContent(
                     messages = if (state == "home") emptyList() else listOf(
@@ -45,7 +45,7 @@ private fun ChatVisualPreview(@PreviewParameter(ChatVisualStates::class) state: 
                     streaming = state == "running", toolStatus = if (state == "running") "正在处理" else null,
                     modelOptions = listOf(provider to provider.model), onBack = {}, onSwitchModel = { _, _ -> },
                     onSendMessage = {}, onViewFile = {}, isDraft = state == "home", reasoningSupport = support,
-                    modelReasoningEffort = ReasoningEffort.MEDIUM)
+                    reasoningEffortOverride = ReasoningEffort.MEDIUM)
             }
         }
     }

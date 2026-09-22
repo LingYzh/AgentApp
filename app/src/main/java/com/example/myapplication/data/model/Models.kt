@@ -86,7 +86,9 @@ enum class ReasoningProtocol {
 data class ReasoningSupport(
     val protocol: ReasoningProtocol,
     val efforts: List<ReasoningEffort>,
-    val description: String
+    val description: String,
+    /** Original model ID lets presentation reuse the provider's exact budget mapping. */
+    val modelId: String = ""
 )
 
 private val openCompatibleEfforts = listOf(
@@ -201,7 +203,7 @@ fun reasoningSupportFor(type: ProviderType, modelId: String): ReasoningSupport {
                 "此 Gemini 模型世代无法可靠判断，因而不会发送 thinkingConfig。"
             )
         }
-    }
+    }.copy(modelId = modelId)
 }
 
 /** AUTO keeps the manual protocol for the older, identified Claude generations only. */
@@ -339,7 +341,7 @@ data class Conversation(
     /** 会话内切换模型的 override（只影响本会话） */
     var providerIdOverride: String? = null,
     var modelOverride: String? = null,
-    /** Null follows the model configuration selected for this conversation. */
+    /** Legacy or unavailable selection; ModelResolver chooses a supported session fallback. */
     @Volatile
     var reasoningEffortOverride: ReasoningEffort? = null,
     var contextCompaction: ContextCompaction? = null,
@@ -351,8 +353,10 @@ data class Conversation(
     var executionStatus: String? = null,
     var stopReason: String? = null,
     var permissionMode: PermissionMode = PermissionMode.ACCEPT_EDIT,
-    /** Empty means all OS-accessible paths; otherwise canonical directory boundaries. */
+    /** Additional canonical directories for file tools; the effective scope also includes workingDirectory. */
     var allowedDirectories: List<String> = emptyList(),
+    /** Null uses the canonical workspace directory; non-null must be an existing absolute directory. */
+    var workingDirectory: String? = null,
     /** Frozen first-use system prefix; changing runtime facts are appended as messages. */
     var systemPromptSnapshot: String? = null
 )
@@ -410,7 +414,8 @@ object ModelResolver {
         val model = conversation.modelOverride
             ?: profile?.model?.takeIf { it.isNotBlank() }
             ?: provider?.model
-        return provider?.copy(model = model ?: provider.model)
+        val resolved = provider?.copy(model = model ?: provider.model) ?: return null
+        return resolved.copy(reasoningEffort = resolved.sessionEffort(conversation.reasoningEffortOverride))
     }
 }
 

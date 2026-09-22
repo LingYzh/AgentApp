@@ -38,11 +38,15 @@
 - 工具定义集中于 `Tools`，执行入口为 `ToolExecutor`；AgentProfile 的空工具列表表示全部工具可用。
 - 子代理禁止再次委派；模型选择优先级为设置页强制配置、工具参数、继承主代理。
 - 工作区文件操作须保留 FileStore 的路径边界校验。
-- 冷入口为 NEW_CHAT 草稿，历史入口保留；首次有效发送通过 FileStore.commitDraft 回执保存会话和首条消息，不创建空历史。
-- ChatSessions 在 Activity 的 ViewModel 内持有 ChatViewModel；草稿到 CHAT 交接复用同一 viewModelScope。Activity 最终销毁会取消任务，尚无独立后台任务服务。
+- NEW_CHAT 是主界面，SavedStateHandle 保存当前草稿/历史会话选择；首发通过 FileStore.commitDraft 保存会话和首条消息后原地显示聊天，不导航到 CHAT，不创建空历史。抽屉“新对话”替换为新草稿，历史选择在主界面打开；CHAT 保留给子会话详情。
+- 新会话配置用 new-chat-defaults.json 保存 Agent/模型/具体思考档位/权限模式/工作目录/目录范围；草稿调整立即记忆，历史调整不影响默认，正文附件不继承。首次思考 medium，无该档则取支持列表中位档；Provider 不再配置默认思考强度。
+- Conversation.workingDirectory 决定相对文件路径和空命令 cwd，null 使用 App workspace；文件工具范围是工作目录与 allowedDirectories 额外目录的并集，额外目录留空仅访问工作目录。Shell 不受该目录范围约束，继续按权限模式审批。保留 canonical 路径边界、附件工作区引用和 Plan 专用文件规则。
+- ChatSessions 在 Activity 的 ViewModel 内持有 ChatViewModel；首发和从历史重开复用同一执行任务。Activity 最终销毁会取消任务，尚无独立后台任务服务。
 - 草稿/输入/附件引用通过 SavedStateHandle 恢复；旋转、外部选择器和后台返回不重置导航。工具详情只使用对应调用记录与已保存快照，不重读文件冒充历史。
+- 会话顶栏标题在上、Agent 名称在下；模型选择仅保留在输入框。反馈横幅悬浮于顶栏下方，不占正文高度（用户修订优先于原型旧占位要求）。
 - 取消必须贯穿网络读取、工具和子代理；不得将 CancellationException 转为普通工具错误。
 - 导航列表在 STARTED 阶段刷新，避免等待入场动画结束后才加载；圆角卡片使用 Card 自身的 onClick 处理 ripple。
 - 当前没有无障碍服务、截图、通知监听、Shizuku 或 root 执行实现。
 - 代码使用四空格缩进，添加必要注释，避免提前抽象。
+- 手动深浅色覆盖须同步 Activity 的 SystemBarStyle；不能让状态栏/导航栏图标继续只跟随系统主题。
 - 后续代码改动同步维护 `.Codex/memory/`，并检查相关目录是否存在需要更新的 `CLAUDE.md`。

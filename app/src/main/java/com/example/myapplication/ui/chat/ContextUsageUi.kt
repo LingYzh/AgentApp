@@ -7,6 +7,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,9 +17,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -33,27 +40,43 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.window.DialogWindowProvider
 import com.example.myapplication.data.model.ContextOverview
 import com.example.myapplication.data.model.ContextSegment
 import com.example.myapplication.data.model.ContextUsageRecord
 import com.example.myapplication.data.model.ReasoningEffort
+import com.example.myapplication.data.model.ReasoningProtocol
 import com.example.myapplication.data.model.ReasoningSupport
+import com.example.myapplication.provider.anthropicBudgetFor
+import com.example.myapplication.provider.geminiBudgetFor
 import java.text.DateFormat
 import java.util.Date
 import java.text.NumberFormat
+import kotlin.math.roundToInt
 
 /** Compact entry only; the sheet retains all eight categories and server-reported usage. */
 @Composable
@@ -64,12 +87,12 @@ internal fun CompactContextUsage(overview: ContextOverview?, onClick: () -> Unit
     val track = MaterialTheme.colorScheme.outlineVariant
     Row(Modifier.heightIn(min = 48.dp).clickable(onClick = onClick).padding(horizontal = 3.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        androidx.compose.foundation.Canvas(Modifier.size(13.dp)) {
+        androidx.compose.foundation.Canvas(Modifier.size(16.dp)) {
             val stroke = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx())
             drawArc(track, -90f, 360f, false, style = stroke)
-            if (capacity != null) {
+            if (used > 0L) {
                 var start = -90f
-                val denominator = maxOf(capacity.toLong(), used, 1L)
+                val denominator = maxOf(capacity?.toLong() ?: used, used, 1L)
                 colors.forEach { (tokens, color) ->
                     val sweep = tokens.toFloat() / denominator * 360f
                     drawArc(color, start, sweep, false, style = stroke)
@@ -78,7 +101,7 @@ internal fun CompactContextUsage(overview: ContextOverview?, onClick: () -> Unit
             }
         }
         Text(if (capacity == null) "容量未配置" else "约 ${used * 100 / capacity}%",
-            fontSize = androidx.compose.ui.unit.TextUnit(10f, androidx.compose.ui.unit.TextUnitType.Sp),
+            fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -114,10 +137,10 @@ internal fun ContextUsageBar(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 internal fun ReasoningEffortMenu(
     support: ReasoningSupport?,
     override: ReasoningEffort?,
-    modelDefault: ReasoningEffort?,
     enabled: Boolean,
     onChange: (ReasoningEffort?) -> Unit,
     modifier: Modifier = Modifier,
@@ -130,64 +153,312 @@ internal fun ReasoningEffortMenu(
     }
     var expanded by remember { mutableStateOf(initiallyExpanded) }
     var detailed by remember { mutableStateOf(false) }
-    var slider by remember(override, available) { mutableStateOf((available.indexOf(override) + 1).toFloat()) }
-    val selectedLabel = override?.wireValue ?: modelDefault?.let { "跟随 · ${it.wireValue}" } ?: "跟随配置"
+    // Imported/unsupported values still present a concrete supported session selection.
+    val fallbackEffort = available.firstOrNull { it == ReasoningEffort.MEDIUM }
+        ?: available[available.size / 2]
+    val effective = override?.takeIf { it in available } ?: fallbackEffort
+    var draftIndex by remember(override, available) {
+        mutableStateOf(available.indexOf(effective))
+    }
+    val effectiveIndex = available.indexOf(effective)
+    val previewEffort = available[draftIndex]
+    val selectedLabel = effortLabel(effective)
     Box(modifier) {
-        UiTextButton(onClick = { detailed = false; expanded = true }, enabled = enabled,
+        UiTextButton(onClick = { draftIndex = effectiveIndex; detailed = false; expanded = true }, enabled = enabled,
             modifier = Modifier.heightIn(min = 48.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                 androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Outlined.AutoAwesome, null, Modifier.size(14.dp))
                 Spacer(Modifier.width(4.dp))
-                Text(selectedLabel, fontSize = androidx.compose.ui.unit.TextUnit(10f, androidx.compose.ui.unit.TextUnitType.Sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, false))
+                Text(selectedLabel, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, false))
                 androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.ExpandMore, null, Modifier.size(16.dp))
             }
         }
-        if (expanded) androidx.compose.ui.window.Dialog(onDismissRequest = { expanded = false },
+        if (expanded) androidx.compose.ui.window.Dialog(onDismissRequest = { draftIndex = effectiveIndex; expanded = false },
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
-            Box(Modifier.fillMaxSize().clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) { expanded = false },
+            if (!detailed) DialogDimAmount(.15f)
+            Box(Modifier.fillMaxSize().clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {
+                draftIndex = effectiveIndex
+                expanded = false
+            },
                 contentAlignment = Alignment.BottomCenter) {
-            Surface(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 64.dp).fillMaxWidth()
-                .clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {},
-                shape = RoundedCornerShape(23.dp), color = MaterialTheme.colorScheme.surface,
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+            val panelModifier = if (detailed) {
+                Modifier.fillMaxWidth().fillMaxHeight(.9f)
+            } else {
+                Modifier.padding(start = 16.dp, end = 16.dp, bottom = 64.dp).fillMaxWidth().widthIn(max = 640.dp)
+            }
+            Surface(panelModifier.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {},
+                shape = if (detailed) RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp) else RoundedCornerShape(22.dp),
+                color = if (detailed) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surface,
+                border = if (detailed) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
             androidx.compose.animation.AnimatedContent(detailed, label = "reasoning detail") { details ->
-                Column(Modifier.inertWhen(details != detailed || !expanded).heightIn(max = 540.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    if (details) {
-                        Text("思考强度", style = MaterialTheme.typography.titleMedium)
-                        Text(support?.description.orEmpty(), style = MaterialTheme.typography.bodySmall)
-                        Text("适配字段：${when (support?.protocol) {
-                            com.example.myapplication.data.model.ReasoningProtocol.OPENAI_CHAT_COMPLETIONS -> "reasoning_effort"
-                            com.example.myapplication.data.model.ReasoningProtocol.ANTHROPIC_ADAPTIVE -> "thinking / output_config.effort"
-                            com.example.myapplication.data.model.ReasoningProtocol.ANTHROPIC_MANUAL -> "thinking.budget_tokens"
-                            com.example.myapplication.data.model.ReasoningProtocol.GEMINI_THINKING_LEVEL -> "thinkingConfig.thinkingLevel"
-                            com.example.myapplication.data.model.ReasoningProtocol.GEMINI_THINKING_BUDGET -> "thinkingConfig.thinkingBudget"
-                            else -> "由当前适配器决定"
-                        }}", style = MaterialTheme.typography.labelSmall)
-                        UiTextButton(onClick = { onChange(null); expanded = false }) { Text("跟随模型配置 · null") }
-                        available.forEach { effort ->
-                            UiTextButton(onClick = { onChange(effort); expanded = false }) { Text(effortLabel(effort)) }
+                Box(Modifier.inertWhen(details != detailed || !expanded)) {
+                if (details) {
+                    ReasoningEffortDetails(
+                        support = support,
+                        available = available,
+                        selectedEffort = previewEffort,
+                        enabled = enabled,
+                        onChange = { effort ->
+                            draftIndex = available.indexOf(effort)
+                            onChange(effort)
+                        },
+                        onClose = { draftIndex = effectiveIndex; expanded = false },
+                        onReturn = { detailed = false }
+                    )
+                } else {
+                    Column(Modifier.heightIn(max = 540.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 13.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Outlined.AutoAwesome, null,
+                                Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            UiTextButton(onClick = { detailed = true }, enabled = enabled, modifier = Modifier.weight(1f)) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(
+                                            effortLabel(previewEffort),
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.KeyboardArrowRight, null,
+                                            Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                                    }
+                                    Text("当前会话档位 · 查看全部档位",
+                                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            androidx.compose.material3.IconButton(onClick = {
+                                draftIndex = available.indexOf(fallbackEffort)
+                                onChange(fallbackEffort)
+                            }, enabled = enabled) {
+                                androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Refresh, "重置为默认思考强度",
+                                    Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
-                        UiTextButton(onClick = { detailed = false }) { Text("返回滑块") }
-                    } else {
-                        val preview = available.getOrNull(slider.toInt() - 1)
-                        UiTextButton(onClick = { detailed = true }) {
-                            Text(preview?.let(::effortLabel) ?: "跟随模型配置 · null")
-                        }
-                        androidx.compose.material3.Slider(
-                            value = slider,
-                            onValueChange = { slider = it },
-                            onValueChangeFinished = { onChange(available.getOrNull(slider.toInt() - 1)) },
-                            valueRange = 0f..available.size.toFloat(), steps = (available.size - 1).coerceAtLeast(0),
-                            modifier = Modifier.heightIn(min = 48.dp)
+                        DiscreteReasoningSlider(
+                            available = available,
+                            selectedIndex = draftIndex,
+                            enabled = enabled,
+                            onPreview = { draftIndex = it },
+                            onCommit = { index ->
+                                draftIndex = index
+                                onChange(available[index])
+                            }
                         )
-                        Text("拖动后松手应用；点上方文字查看完整字段值。", style = MaterialTheme.typography.bodySmall)
-                        UiTextButton(onClick = { slider = 0f; onChange(null) }) { Text("重置为跟随模型") }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(effortLabel(available.first()), style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(effortLabel(available.last()), style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text(reasoningWireField(support, previewEffort), modifier = Modifier.fillMaxWidth().padding(top = 11.dp),
+                            style = MaterialTheme.typography.labelMedium, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontFamily = FontFamily.Monospace, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        Text("拖动后松手应用；点上方文字查看全部字段值。", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 5.dp))
                     }
+                }
                 }
             }
             }
             }
         }
+    }
+}
+
+@Composable
+private fun ReasoningEffortDetails(
+    support: ReasoningSupport?,
+    available: List<ReasoningEffort>,
+    selectedEffort: ReasoningEffort,
+    enabled: Boolean,
+    onChange: (ReasoningEffort) -> Unit,
+    onClose: () -> Unit,
+    onReturn: () -> Unit
+) {
+    val scrollState = androidx.compose.foundation.rememberScrollState()
+    LaunchedEffect(Unit) { scrollState.scrollTo(0) }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("思考强度", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+            androidx.compose.material3.IconButton(onClick = onClose) {
+                androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Close, "关闭", Modifier.size(22.dp))
+            }
+        }
+        Text("为当前会话选择思考档位。档位只来自当前模型支持列表。", Modifier.padding(horizontal = 22.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 22.dp)
+                .selectableGroup()
+        ) {
+            available.forEach { effort ->
+                ReasoningEffortOption(
+                    title = effort.label,
+                    wireValue = effort.wireValue,
+                    detail = reasoningWireField(support, effort),
+                    selected = selectedEffort == effort,
+                    enabled = enabled,
+                    onClick = { onChange(effort) }
+                )
+            }
+            Text("执行中调整只影响下一次模型请求。", Modifier.padding(top = 16.dp, bottom = 12.dp),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        HorizontalDivider()
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.background)
+                .navigationBarsPadding()
+                .padding(16.dp)
+        ) {
+            OutlinedButton(onClick = onReturn, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.ArrowBack, null, Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("返回滑块")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReasoningEffortOption(
+    title: String,
+    wireValue: String,
+    detail: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth()
+            .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick),
+        color = Color.Transparent,
+        shape = RoundedCornerShape(0.dp)
+    ) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 70.dp).padding(horizontal = 2.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, style = MaterialTheme.typography.titleSmall)
+                    Text(wireValue, style = MaterialTheme.typography.labelLarge, fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Text(detail, Modifier.padding(top = 5.dp), style = MaterialTheme.typography.labelSmall,
+                    fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            RadioButton(selected = selected, onClick = null, enabled = enabled)
+        }
+    }
+    HorizontalDivider()
+}
+
+@Composable
+private fun DialogDimAmount(amount: Float) {
+    val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+    DisposableEffect(window, amount) {
+        val original = window?.attributes?.dimAmount
+        window?.setDimAmount(amount)
+        onDispose {
+            if (window != null && original != null) window.setDimAmount(original)
+        }
+    }
+}
+
+/** Material owns accessible input; its slots draw the compact prototype track and thumb. */
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun DiscreteReasoningSlider(
+    available: List<ReasoningEffort>,
+    selectedIndex: Int,
+    enabled: Boolean,
+    onPreview: (Int) -> Unit,
+    onCommit: (Int) -> Unit
+) {
+    val count = available.size
+    // An external reset must also discard any preview left by a cancelled gesture.
+    var pendingCommitIndex by remember(selectedIndex, available) { mutableStateOf<Int?>(null) }
+    val fraction = if (count <= 1) 0f else selectedIndex.toFloat() / (count - 1)
+    val inactiveTrack = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = if (enabled) 1f else .55f)
+    val activeTrack = MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 1f else .45f)
+    val activeTick = MaterialTheme.colorScheme.onPrimary.copy(alpha = .38f)
+    val inactiveTick = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .45f)
+    Box(Modifier.fillMaxWidth().height(52.dp)) {
+        // Material's thumb travels from 17dp to width-17dp. Draw the complete pill
+        // behind it, with ticks at those same centers, outside the clipped track slot.
+        androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+            val trackHeight = 28.dp.toPx()
+            val top = (size.height - trackHeight) / 2
+            val inset = 17.dp.toPx().coerceAtMost(size.width / 2)
+            val rtl = layoutDirection == androidx.compose.ui.unit.LayoutDirection.Rtl
+            val corners = androidx.compose.ui.geometry.CornerRadius(trackHeight / 2)
+            drawRoundRect(inactiveTrack, androidx.compose.ui.geometry.Offset(0f, top),
+                androidx.compose.ui.geometry.Size(size.width, trackHeight), corners)
+            val fill = size.width * fraction
+            if (fill > 0f) drawRoundRect(activeTrack,
+                androidx.compose.ui.geometry.Offset(if (rtl) size.width - fill else 0f, top),
+                androidx.compose.ui.geometry.Size(fill, trackHeight), corners)
+            repeat(count) { index ->
+                val progress = if (count <= 1) 0f else index.toFloat() / (count - 1)
+                val position = inset + (size.width - 2 * inset) * progress
+                drawCircle(if (index <= selectedIndex) activeTick else inactiveTick, 2.dp.toPx(),
+                    androidx.compose.ui.geometry.Offset(if (rtl) size.width - position else position, size.height / 2))
+            }
+        }
+    Slider(
+        value = selectedIndex.toFloat(),
+        onValueChange = { next ->
+            pendingCommitIndex = next.roundToInt().coerceIn(0, count - 1)
+            onPreview(requireNotNull(pendingCommitIndex))
+        },
+        onValueChangeFinished = {
+            val finalIndex = pendingCommitIndex ?: selectedIndex
+            pendingCommitIndex = null
+            onCommit(finalIndex)
+        },
+        enabled = enabled,
+        valueRange = 0f..(count - 1).toFloat(),
+        steps = (count - 2).coerceAtLeast(0),
+        modifier = Modifier.fillMaxWidth().height(52.dp).semantics {
+            contentDescription = "思考强度"
+            stateDescription = effortLabel(available[selectedIndex])
+        },
+        thumb = {
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .shadow(4.dp, RoundedCornerShape(50))
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.White)
+            )
+        },
+        track = { Spacer(Modifier.fillMaxWidth().height(28.dp)) }
+    )
+    }
+}
+
+private fun reasoningWireField(support: ReasoningSupport?, effort: ReasoningEffort?): String {
+    if (effort == null) return "当前未发送思考字段"
+    return when (support?.protocol) {
+        ReasoningProtocol.OPENAI_CHAT_COMPLETIONS -> "reasoning_effort = \"${effort.wireValue}\""
+        ReasoningProtocol.ANTHROPIC_ADAPTIVE -> if (effort == ReasoningEffort.NONE) {
+            "thinking.type = \"disabled\""
+        } else {
+            "thinking.type = \"adaptive\" · output_config.effort = \"${effort.wireValue}\""
+        }
+        ReasoningProtocol.ANTHROPIC_MANUAL -> if (effort == ReasoningEffort.NONE) {
+            "thinking.type = \"disabled\""
+        } else {
+            "thinking.type = \"enabled\" · thinking.budget_tokens = ${anthropicBudgetFor(effort)}"
+        }
+        ReasoningProtocol.GEMINI_THINKING_LEVEL -> "generationConfig.thinkingConfig.thinkingLevel = \"${effort.wireValue}\""
+        ReasoningProtocol.GEMINI_THINKING_BUDGET -> support.modelId.takeIf { it.isNotBlank() }?.let { modelId ->
+            "generationConfig.thinkingConfig.thinkingBudget = ${geminiBudgetFor(modelId, effort)}"
+        } ?: "generationConfig.thinkingConfig.thinkingBudget"
+        ReasoningProtocol.UNSUPPORTED, null -> "当前适配器不会发送思考字段"
     }
 }
 

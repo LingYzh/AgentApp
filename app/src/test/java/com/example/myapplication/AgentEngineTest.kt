@@ -347,6 +347,24 @@ class AgentEngineTest {
     }
 
     @Test
+    fun `subagent inherits selected working directory and environment reports it`() = runBlocking {
+        val project = store.workspaceFile("project").also { check(it.mkdirs()) }.canonicalFile
+        val fake = FakeProvider(ArrayDeque(listOf(
+            listOf(StreamEvent.ToolCall("s1", "run_subagent", """{"task":"inspect"}"""), StreamEvent.Done("tool_calls")),
+            listOf(StreamEvent.Text("child done"), StreamEvent.Done("stop")),
+            listOf(StreamEvent.Text("parent done"), StreamEvent.Done("stop"))
+        )))
+        val parent = newConversation().also { it.workingDirectory = project.path }
+        AgentEngine(store, FakeFactory(fake), SubagentRunner(store, FakeFactory(fake))).run(parent, config)
+
+        val child = store.listChildConversations(parent.id).single()
+        assertEquals(project.path, child.workingDirectory)
+        assertTrue(fake.receivedMessages.take(2).all { messages ->
+            messages.any { it.contextKind == "environment" && it.content.contains("当前工作目录：${project.path}") }
+        })
+    }
+
+    @Test
     fun `subagent uses settings-forced model with highest priority`() = runBlocking {
         val forced = ProviderConfig(id = "p2", name = "forced", type = ProviderType.OPENAI, model = "m-forced")
         store.saveConfig(

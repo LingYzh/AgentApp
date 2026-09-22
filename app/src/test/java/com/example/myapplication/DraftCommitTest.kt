@@ -3,6 +3,7 @@ package com.example.myapplication
 import com.example.myapplication.data.model.*
 import com.example.myapplication.data.store.FileStore
 import com.example.myapplication.ui.chat.ChatUiState
+import com.example.myapplication.ui.chat.HomeChatSelection
 import com.example.myapplication.agent.PermissionSession
 import com.example.myapplication.agent.PermissionCoordinator
 import kotlinx.serialization.json.Json
@@ -18,8 +19,12 @@ class DraftCommitTest {
 
     @Test fun draftReceiptsCannotBeEditedByAcceptEditTools() {
         val store = FileStore(temp.root)
-        val session = PermissionSession(store, Conversation(permissionMode = PermissionMode.ACCEPT_EDIT), PermissionCoordinator())
-        assertNotNull(session.canWritePath(File(store.draftReceiptsDir, "draft-one").absolutePath))
+        val session = PermissionSession(store, Conversation(
+            permissionMode = PermissionMode.ACCEPT_EDIT,
+            allowedDirectories = listOf(store.draftReceiptsDir.canonicalPath)
+        ), PermissionCoordinator())
+        assertTrue(session.canWritePath(File(store.draftReceiptsDir, "draft-one").absolutePath)
+            ?.contains("会话元数据") == true)
         assertTrue(runCatching { store.commitDraft("../escape", Conversation()) }.isFailure)
     }
 
@@ -65,5 +70,25 @@ class DraftCommitTest {
         val json = Json { encodeDefaults = true }
         assertEquals(state, json.decodeFromString(ChatUiState.serializer(), json.encodeToString(ChatUiState.serializer(), state)))
         assertNull(state.conversationId)
+    }
+
+    @Test fun homeCanStartFreshAndReopenCommittedHistoryWithoutCreatingEmptyRecords() {
+        val store = FileStore(temp.root)
+        val home = HomeChatSelection.draft("agent")
+        val committed = store.commitDraft(home.sessionKey, Conversation(id = "", agentId = home.agentId,
+            messages = mutableListOf(ChatMessage(role = "user", content = "first"))))
+        val json = Json { encodeDefaults = true }
+        val restoredHome = json.decodeFromString(HomeChatSelection.serializer(),
+            json.encodeToString(HomeChatSelection.serializer(), home))
+        // Home keeps the draft session key after send, including across process restoration.
+        assertEquals(committed.id, store.committedDraft(restoredHome.sessionKey)!!.id)
+        val fresh = HomeChatSelection.draft()
+        assertNotEquals(home.sessionKey, fresh.sessionKey)
+        assertNull(fresh.conversationId)
+        assertNull(fresh.agentId)
+        assertNull(store.committedDraft(fresh.sessionKey))
+        val history = HomeChatSelection.history(committed.id)
+        assertEquals("first", store.loadConversation(history.conversationId!!)!!.messages.single().content)
+        assertEquals(1, store.listConversations().size)
     }
 }

@@ -16,6 +16,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.SideEffect
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -94,6 +97,7 @@ import com.example.myapplication.ui.agents.AgentEditScreen
 import com.example.myapplication.ui.agents.AgentsScreen
 import com.example.myapplication.ui.chat.ChatScreen
 import com.example.myapplication.ui.chat.ConversationsScreen
+import com.example.myapplication.ui.chat.showHomeChat
 import com.example.myapplication.ui.files.FileViewScreen
 import com.example.myapplication.ui.files.FilesScreen
 import com.example.myapplication.ui.memory.MemoryScreen
@@ -187,6 +191,20 @@ class MainActivity : ComponentActivity() {
         setContent {
             val app = applicationContext as AgentApp
             val themeMode by app.themeMode.collectAsStateWithLifecycle()
+            val darkSystemBars = when (themeMode) {
+                "light" -> false
+                "dark" -> true
+                else -> isSystemInDarkTheme()
+            }
+            SideEffect {
+                // SystemBarStyle's default detector follows Android, not the app override.
+                // Reapply when either the chosen theme or system configuration changes.
+                enableEdgeToEdge(
+                    statusBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT,
+                        android.graphics.Color.TRANSPARENT) { darkSystemBars },
+                    navigationBarStyle = SystemBarStyle.auto(0xE6FFFFFF.toInt(), 0x801B1B1B.toInt()) { darkSystemBars }
+                )
+            }
             AgentTheme(themeMode = themeMode) {
                 AppRoot()
             }
@@ -238,8 +256,10 @@ fun AppRoot() {
                     onClose = { scope.launch { drawerState.close() } },
                     onNavigate = { route ->
                         scope.launch { drawerState.close() }
-                        if (currentRoute != route) {
-                            navController.safeNavigate(route)
+                        when {
+                            route == Routes.newChat() -> navController.showHomeChat()
+                            route.startsWith("chat/") -> navController.showHomeChat(route.substringAfter("chat/").substringBefore('?'))
+                            currentRoute != route -> navController.safeNavigate(route)
                         }
                     }
                 )
@@ -276,7 +296,7 @@ fun AppRoot() {
                 composable(Routes.NEW_CHAT,
                     arguments = listOf(navArgument("agentId") { type = NavType.StringType; nullable = true; defaultValue = null })
                 ) { entry ->
-                    com.example.myapplication.ui.chat.NewChatScreen(navController, entry.arguments?.getString("agentId"), openDrawer)
+                    com.example.myapplication.ui.chat.NewChatScreen(navController, entry, openDrawer)
                 }
                 composable(Routes.CONVERSATIONS) {
                     ConversationsScreen(navController, openDrawer)
@@ -353,7 +373,13 @@ fun AppRoot() {
                         agentId = backStack.arguments?.getString("id").orEmpty()
                     )
                 }
-                composable(Routes.SETTINGS) { SettingsScreen(openDrawer) }
+                composable(Routes.SETTINGS) {
+                    SettingsScreen(openDrawer, onOpenSection = { route ->
+                        if (route in setOf(Routes.PROVIDERS, Routes.AGENTS, Routes.CONVERSATIONS, Routes.MEMORY, Routes.SKILLS)) {
+                            navController.safeNavigateDirect(route)
+                        }
+                    })
+                }
             }
         }
     }
@@ -385,7 +411,7 @@ fun AppDrawerSheetContent(
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
             Button(onClick = { onNavigate(Routes.newChat()) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(
-                    containerColor = androidx.compose.ui.graphics.Color(0xFF3B3B34), contentColor = androidx.compose.ui.graphics.Color.White)) {
+                    containerColor = com.example.myapplication.ui.theme.drawerActionColor(), contentColor = androidx.compose.ui.graphics.Color.White)) {
                 Icon(Icons.Default.Add, null, Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp)); Text("新对话")
             }

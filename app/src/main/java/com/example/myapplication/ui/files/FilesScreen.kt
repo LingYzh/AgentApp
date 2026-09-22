@@ -20,34 +20,33 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Card
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import com.example.myapplication.ui.components.UiTextButton
+import com.example.myapplication.ui.components.ListPageHeader
+import com.example.myapplication.ui.components.TopFeedbackHost
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -308,9 +307,16 @@ fun FilesContent(
     onExportSelected: (Set<String>) -> Unit = {},
     busy: Boolean = false
 ) {
+    var query by rememberSaveable { mutableStateOf("") }
     val selection = rememberListSelection(files.map { it.first })
+    val normalizedQuery = query.trim()
+    val filteredFiles = remember(files, normalizedQuery) {
+        files.filter { (path, _) ->
+            normalizedQuery.isBlank() || path.contains(normalizedQuery, ignoreCase = true)
+        }
+    }
     UiScaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { TopFeedbackHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("文件工作区") },
@@ -334,7 +340,7 @@ fun FilesContent(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                 )
@@ -351,38 +357,44 @@ fun FilesContent(
                 )
             }
         },
-        floatingActionButton = {
-            if (!selection.active) {
-                FloatingActionButton(onClick = { if (!busy) onUpload() }) {
-                    Icon(Icons.Filled.UploadFile, "上传文件")
-                }
-            }
-        }
     ) { padding ->
-        if (files.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text(
-                    "工作区为空。Agent 生成的文件会出现在这里，也可以点右下角上传。",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(32.dp)
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(
+                start = ExpressiveTokens.ScreenHorizontalPadding,
+                top = 8.dp,
+                end = ExpressiveTokens.ScreenHorizontalPadding,
+                bottom = if (selection.active) 16.dp else 24.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            item(key = "page-header") {
+                ListPageHeader(
+                    title = "文件工作区",
+                    description = "浏览 Agent 生成的文件，或上传新的工作区资料。",
+                    query = query,
+                    onQueryChange = { query = it },
+                    searchPlaceholder = "搜索文件",
+                    actionLabel = if (selection.active || busy) null else "上传文件",
+                    onAction = if (selection.active || busy) null else onUpload
                 )
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(
-                    start = ExpressiveTokens.ScreenHorizontalPadding,
-                    top = 8.dp,
-                    end = ExpressiveTokens.ScreenHorizontalPadding,
-                    bottom = ExpressiveTokens.FabSafeBottomPadding
-                ),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(files, key = { it.first }) { (path, size) ->
+            if (filteredFiles.isEmpty()) {
+                item(key = "empty-state") {
+                    Text(
+                        if (normalizedQuery.isBlank()) "工作区为空" else "没有匹配的文件",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            } else {
+                items(filteredFiles, key = { it.first }) { (path, size) ->
                     Card(
                         shape = ExpressiveTokens.CardShape,
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                            containerColor = MaterialTheme.colorScheme.surface
                         ),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         onClick = {
@@ -524,14 +536,15 @@ fun FileViewContent(
 ) {
     var editing by remember { mutableStateOf(initialEditing) }
     var editBuffer by remember(content) { mutableStateOf(content ?: "") }
-    var selectedTab by androidx.compose.runtime.saveable.rememberSaveable(path) { mutableStateOf(0) }
-    var source by androidx.compose.runtime.saveable.rememberSaveable(path) { mutableStateOf(false) }
+    // Reading and source are separate tabs.  The change tab is shown only for a
+    // persisted tool snapshot; it never reconstructs a diff from the current file.
+    var selectedTab by androidx.compose.runtime.saveable.rememberSaveable(path) { androidx.compose.runtime.mutableIntStateOf(0) }
     val markdown = path.endsWith(".md", true) || path.endsWith(".markdown", true)
     val readingScroll = rememberScrollState()
     val sourceScroll = rememberScrollState()
 
     LaunchedEffect(recentChange) {
-        if (recentChange == null) selectedTab = 0
+        if (recentChange == null && selectedTab == 2) selectedTab = 0
     }
 
     UiScaffold(
@@ -545,7 +558,7 @@ fun FileViewContent(
                 },
                 actions = {
                     if (content != null && !isImage) {
-                        IconButton(onClick = {
+                        UiTextButton(onClick = {
                             if (editing) {
                                 onSave(editBuffer)
                                 editing = false
@@ -555,7 +568,7 @@ fun FileViewContent(
                                 editing = true
                             }
                         }) {
-                            Icon(if (editing) Icons.Filled.Save else Icons.Filled.Edit, "编辑/保存")
+                            Text(if (editing) "保存" else "编辑")
                         }
                     }
                     IconButton(onClick = onShare) {
@@ -563,7 +576,7 @@ fun FileViewContent(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
                     actionIconContentColor = MaterialTheme.colorScheme.onSurface
@@ -572,28 +585,30 @@ fun FileViewContent(
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            if (recentChange != null) {
-                TabRow(selectedTabIndex = selectedTab) {
+            if (!editing && !isImage && content != null) {
+                TabRow(selectedTabIndex = selectedTab.coerceAtMost(if (recentChange == null) 1 else 2)) {
                     Tab(
                         selected = selectedTab == 0,
                         onClick = { selectedTab = 0 },
-                        text = { Text("内容") }
+                        text = { Text("阅读") }
                     )
                     Tab(
                         selected = selectedTab == 1,
                         onClick = { selectedTab = 1 },
-                        text = { Text("更改") }
+                        text = { Text("源码") }
+                    )
+                    if (recentChange != null) Tab(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        text = { Text("最近变更") }
                     )
                 }
             }
-            if (markdown && !editing && selectedTab == 0) {
-                com.example.myapplication.ui.components.UiTextButton(onClick = { source = !source }) { Text(if (source) "阅读 Markdown" else "查看源码") }
-            }
-            androidx.compose.animation.Crossfade(selectedTab to source, label = "file tab", modifier = Modifier.fillMaxSize()) { (tab, raw) ->
-                if (recentChange != null && tab == 1) {
+            androidx.compose.animation.Crossfade(selectedTab, label = "file tab", modifier = Modifier.fillMaxSize()) { tab ->
+                if (recentChange != null && tab == 2) {
                     FileDiffContent(
                         change = recentChange,
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp)
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 12.dp)
                     )
                 } else {
                     when {
@@ -622,10 +637,19 @@ fun FileViewContent(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .imePadding()
-                                .padding(8.dp),
-                            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                                .padding(horizontal = 22.dp, vertical = 12.dp),
+                            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            minLines = 1,
+                            maxLines = Int.MAX_VALUE,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                                disabledContainerColor = MaterialTheme.colorScheme.surface,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                            )
                         )
-                        content != null && markdown && !raw -> {
+                        content != null && markdown && tab == 0 -> {
                             com.example.myapplication.ui.components.MarkdownContent(content,
                                 Modifier.fillMaxSize().verticalScroll(readingScroll).padding(22.dp))
                         }
@@ -635,7 +659,7 @@ fun FileViewContent(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .verticalScroll(sourceScroll)
-                                    .padding(16.dp)
+                                    .padding(22.dp)
                                     .padding(bottom = 24.dp),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontFamily = FontFamily.Monospace

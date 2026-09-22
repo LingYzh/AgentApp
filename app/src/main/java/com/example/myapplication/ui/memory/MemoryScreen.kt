@@ -10,31 +10,36 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import com.example.myapplication.ui.components.UiTextButton
+import com.example.myapplication.ui.components.FormSection
+import com.example.myapplication.ui.components.PrototypeTextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -42,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,6 +68,8 @@ import com.example.myapplication.data.backup.TransferKind
 import com.example.myapplication.data.model.MemoryEntry
 import com.example.myapplication.ui.components.ListSelectionBar
 import com.example.myapplication.ui.components.rememberListSelection
+import com.example.myapplication.ui.components.ListPageHeader
+import com.example.myapplication.ui.components.TopFeedbackHost
 import com.example.myapplication.ui.transfer.ConfigurationTransferHost
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -208,10 +216,18 @@ fun MemoryContent(
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() }
 ) {
     var editTarget by remember { mutableStateOf<Pair<String?, Boolean>?>(null) } // (id?, open)
+    var query by rememberSaveable { mutableStateOf("") }
     val selection = rememberListSelection(memories.map { it.id }, memories.associate { it.id to it.title })
+    val normalizedQuery = query.trim()
+    val filteredMemories = remember(memories, normalizedQuery, memoryContentProvider) {
+        memories.filter { entry ->
+            normalizedQuery.isBlank() || listOf(entry.title, memoryContentProvider(entry.id))
+                .any { it.contains(normalizedQuery, ignoreCase = true) }
+        }
+    }
 
     UiScaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { TopFeedbackHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("记忆") },
@@ -219,7 +235,7 @@ fun MemoryContent(
                     IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "菜单") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                 ),
@@ -246,34 +262,40 @@ fun MemoryContent(
                 )
             }
         },
-        floatingActionButton = {
-            if (!selection.active) {
-                FloatingActionButton(onClick = { editTarget = null to true }) {
-                    Icon(Icons.Filled.Add, "添加记忆")
-                }
-            }
-        }
     ) { padding ->
-        if (memories.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text(
-                    "暂无记忆。Agent 会用 save_memory 工具自动保存重要信息。",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(32.dp)
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(
+                start = ExpressiveTokens.ScreenHorizontalPadding,
+                top = 8.dp,
+                end = ExpressiveTokens.ScreenHorizontalPadding,
+                bottom = if (selection.active) 16.dp else 24.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            item(key = "page-header") {
+                ListPageHeader(
+                    title = "记忆",
+                    description = "保存重要信息，让 Agent 在后续对话中记住它们。",
+                    query = query,
+                    onQueryChange = { query = it },
+                    searchPlaceholder = "搜索记忆",
+                    actionLabel = if (selection.active || busy) null else "新建记忆",
+                    onAction = if (selection.active || busy) null else ({ editTarget = null to true })
                 )
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(
-                    start = ExpressiveTokens.ScreenHorizontalPadding,
-                    top = 8.dp,
-                    end = ExpressiveTokens.ScreenHorizontalPadding,
-                    bottom = if (selection.active) 16.dp else ExpressiveTokens.FabSafeBottomPadding
-                ),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(memories, key = { it.id }) { entry ->
+            if (filteredMemories.isEmpty()) {
+                item(key = "empty-state") {
+                    Text(
+                        if (normalizedQuery.isBlank()) "暂无记忆" else "没有匹配的记忆",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            } else {
+                items(filteredMemories, key = { it.id }) { entry ->
                     MemoryItem(
                         entry = entry,
                         content = memoryContentProvider(entry.id),
@@ -298,34 +320,49 @@ fun MemoryContent(
         var content by remember(id) { mutableStateOf(id?.let { memoryContentProvider(it) } ?: "") }
         var preview by remember(id) { mutableStateOf(false) }
         val previewScroll = androidx.compose.foundation.rememberScrollState()
-        AlertDialog(
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
             onDismissRequest = { editTarget = null },
-            title = { Text(if (id == null) "添加记忆" else "编辑记忆") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        title, { title = it }, Modifier.fillMaxWidth(),
-                        label = { Text("标题") }, singleLine = true
-                    )
-                    UiTextButton(onClick = { preview = !preview }) { Text(if (preview) "编辑源码" else "预览 Markdown") }
-                    androidx.compose.animation.Crossfade(preview, label = "memory preview") { reading ->
-                        if (reading) com.example.myapplication.ui.components.MarkdownContent(content,
-                            Modifier.fillMaxWidth().heightIn(max = 300.dp).verticalScroll(previewScroll))
-                        else OutlinedTextField(content, { content = it }, Modifier.fillMaxWidth(),
-                            label = { Text("内容") }, minLines = 4, maxLines = 8)
+            sheetState = sheetState
+        ) {
+            Column(
+                Modifier.fillMaxWidth().fillMaxHeight(0.9f).imePadding()
+                    .padding(horizontal = ExpressiveTokens.ScreenHorizontalPadding),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(if (id == null) "添加记忆" else "编辑记忆", style = MaterialTheme.typography.titleLarge)
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                    FormSection("内容") {
+                        PrototypeTextField(
+                            title, { title = it },
+                            label = { Text("标题") }, singleLine = true
+                        )
+                        TabRow(selectedTabIndex = if (preview) 0 else 1) {
+                            Tab(selected = preview, onClick = { preview = true }, text = { Text("阅读") })
+                            Tab(selected = !preview, onClick = { preview = false }, text = { Text("源码") })
+                        }
+                        androidx.compose.animation.Crossfade(preview, label = "memory preview") { reading ->
+                            if (reading) com.example.myapplication.ui.components.MarkdownContent(content,
+                                Modifier.fillMaxWidth().heightIn(max = 300.dp).verticalScroll(previewScroll))
+                            else PrototypeTextField(
+                                content, { content = it },
+                                label = { Text("Markdown 源码") }, minLines = 8, maxLines = 12
+                            )
+                        }
                     }
                 }
-            },
-            confirmButton = {
-                UiTextButton(onClick = {
-                    if (title.isNotBlank()) onSaveMemory(id, title.trim(), content)
-                    editTarget = null
-                }) { Text("保存") }
-            },
-            dismissButton = {
-                UiTextButton(onClick = { editTarget = null }) { Text("取消") }
+                Row(
+                    Modifier.fillMaxWidth().navigationBarsPadding(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)
+                ) {
+                    UiTextButton(onClick = { editTarget = null }) { Text("取消") }
+                    UiTextButton(onClick = {
+                        if (title.isNotBlank()) onSaveMemory(id, title.trim(), content)
+                        editTarget = null
+                    }) { Text("保存") }
+                }
             }
-        )
+        }
     }
 }
 
@@ -342,7 +379,7 @@ fun MemoryItem(
     Card(
         shape = ExpressiveTokens.CardShape,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+            containerColor = MaterialTheme.colorScheme.surface
         ),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         onClick = onClick,

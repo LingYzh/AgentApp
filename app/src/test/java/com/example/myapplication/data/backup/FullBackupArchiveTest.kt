@@ -18,6 +18,33 @@ import java.util.zip.ZipOutputStream
 class FullBackupArchiveTest {
     @get:Rule val temp = TemporaryFolder()
     private val pixels = byteArrayOf(1, 7, 3, 9, 11)
+
+    @Test fun rememberedDraftSettingsRoundTripAndOldArchivesResetThem() {
+        val source = store("defaults-source")
+        val defaults = com.example.myapplication.data.model.NewChatDefaults(
+            reasoningEffort = com.example.myapplication.data.model.ReasoningEffort.HIGH,
+            workingDirectory = "/storage/emulated/0/Documents")
+        source.rememberNewChatDefaults(defaults)
+        val target = store("defaults-target")
+        target.loadNewChatDefaults()
+        FullBackupArchive(target).restore(export(source).inputStream())
+        assertEquals(defaults, target.loadNewChatDefaults())
+        FullBackupArchive(target).restore(zip("config.json" to "{}".toByteArray()).inputStream())
+        assertEquals(com.example.myapplication.data.model.NewChatDefaults(), target.loadNewChatDefaults())
+        target.flushNewChatDefaults()
+        assertEquals(target.loadNewChatDefaults(), FileStore(target.configFile.parentFile!!).loadNewChatDefaults())
+    }
+
+    @Test fun malformedDefaultsAreRejectedBeforeRestoring() {
+        val target = store("invalid-defaults-target")
+        val original = com.example.myapplication.data.model.NewChatDefaults(agentId = "preserved")
+        target.rememberNewChatDefaults(original)
+        target.flushNewChatDefaults()
+        assertTrue(runCatching {
+            FullBackupArchive(target).restore(zip("new-chat-defaults.json" to "invalid".toByteArray()).inputStream())
+        }.isFailure)
+        assertEquals(original, target.loadNewChatDefaults())
+    }
     private fun store(name: String) = FileStore(temp.newFolder(name))
     private fun export(store: FileStore): ByteArray = ByteArrayOutputStream().also { FullBackupArchive(store).export(it) }.toByteArray()
     private fun putAgent(store: FileStore, id: String = "agent"): AgentProfile {

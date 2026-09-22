@@ -11,10 +11,14 @@ import com.example.myapplication.data.store.AttachmentStore
 import com.example.myapplication.provider.ModelFetcher
 import com.example.myapplication.provider.ProviderFactory
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.asStateFlow
 
 /** Application 类 + 手工 ServiceLocator（项目规模无需 DI 框架） */
 class AgentApp : Application() {
+    private val preferencesScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
+    )
     val subagentRegistry = SubagentRegistry()
     val permissionCoordinator = com.example.myapplication.agent.PermissionCoordinator()
 
@@ -68,6 +72,11 @@ class AgentApp : Application() {
     fun setThemeMode(mode: String) {
         _themeMode.value = mode
         store.saveConfig(store.loadConfig().copy(themeMode = mode))
+    }
+
+    fun rememberNewChatDefaults(defaults: com.example.myapplication.data.model.NewChatDefaults): kotlinx.coroutines.Deferred<Unit> {
+        store.rememberNewChatDefaults(defaults)
+        return preferencesScope.async { store.flushNewChatDefaults() }
     }
 
     /** 每次调用构造一个新的引擎 */

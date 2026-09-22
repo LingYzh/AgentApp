@@ -1,5 +1,7 @@
 package com.example.myapplication.ui.chat
 
+import androidx.compose.material.icons.outlined.Edit
+
 import com.example.myapplication.ui.components.UiScaffold
 import com.example.myapplication.ui.components.MarkdownContent
 import androidx.compose.material3.*
@@ -17,6 +19,9 @@ import com.example.myapplication.agent.ContextCompactor
 import com.example.myapplication.agent.ContextWindows
 import com.example.myapplication.data.model.ContextOverview
 import com.example.myapplication.data.model.PermissionMode
+import com.example.myapplication.data.model.NewChatDefaults
+import com.example.myapplication.data.model.defaultEffort
+import com.example.myapplication.data.model.sessionEffort
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
@@ -97,7 +102,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
+import com.example.myapplication.ui.components.TopFeedbackHost
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -127,7 +133,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.myapplication.ui.theme.AgentTheme
 import androidx.lifecycle.createSavedStateHandle
-import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -194,6 +199,8 @@ class ChatViewModel(
     val plan = _plan.asStateFlow()
     private val _scope = MutableStateFlow<List<String>>(emptyList())
     val fileScope = _scope.asStateFlow()
+    private val _workingDirectory = MutableStateFlow<String?>(null)
+    val workingDirectory = _workingDirectory.asStateFlow()
     private var agents: List<AgentProfile> = emptyList()
     private var generationJob: Job? = null
     private var modelSaveJob: Job? = null
@@ -241,8 +248,6 @@ class ChatViewModel(
     val reasoningSupport = _reasoningSupport.asStateFlow()
     private val _reasoningEffortOverride = MutableStateFlow<ReasoningEffort?>(null)
     val reasoningEffortOverride = _reasoningEffortOverride.asStateFlow()
-    private val _modelReasoningEffort = MutableStateFlow<ReasoningEffort?>(null)
-    val modelReasoningEffort = _modelReasoningEffort.asStateFlow()
     private val _compacting = MutableStateFlow(false)
     val compacting = _compacting.asStateFlow()
     private val _compactionProgress = MutableStateFlow<String?>(null)
@@ -257,13 +262,17 @@ class ChatViewModel(
     init {
         viewModelScope.launch {
             val (loadedAgents, conv, config) = withContext(Dispatchers.IO) {
+                val savedAgents = app.store.loadAgents()
+                val savedConfig = app.store.loadConfig()
                 val loaded = if (isDraft) app.store.committedDraft(sessionKey)
-                    ?: restored?.draft ?: Conversation(id = "", agentId = draftAgentId)
+                    ?: restored?.draft ?: app.store.loadNewChatDefaults().draft(savedConfig, savedAgents, draftAgentId)
                 else app.store.loadConversation(conversationId)
                 if (loaded != null && loaded.id.isNotEmpty() && loaded.parentConversationId == null && ConversationContext.recoverRejectedAttachments(loaded)) {
                     app.store.saveConversation(loaded)
                 }
-                Triple(app.store.loadAgents(), loaded, app.store.loadConfig())
+                // Load preferences on IO even for restored drafts before synchronous updates.
+                app.store.loadNewChatDefaults()
+                Triple(savedAgents, loaded, savedConfig)
             }
             agents = loadedAgents
             _modelOptions.value = config.providers.flatMap { p ->
@@ -283,6 +292,7 @@ class ChatViewModel(
                 }
                 _permissionMode.value = conv.permissionMode
                 _scope.value = conv.allowedDirectories
+                _workingDirectory.value = conv.workingDirectory
                 _isChild.value = conv.parentConversationId != null
                 if (_isChild.value) _childSnapshot.value = conv
                 _messages.value = conv.messages.toList()
@@ -290,6 +300,7 @@ class ChatViewModel(
                 _agentProfile.value = conv.agentId?.let { id -> agents.firstOrNull { it.id == id } }
                 val resolved = ModelResolver.resolve(conv, config, agents)
                 updateResolvedModel(resolved)
+                if (isDraft && restored?.draft == null && draftAgentId != null) rememberDraftDefaults()
                 refreshContextOverview(resolved = resolved)
             } else {
                 _error.value = "对话不存在"
@@ -303,6 +314,7 @@ class ChatViewModel(
         if (draft.id.isNotEmpty() || _streaming.value || _historyBusy.value) return
         conversation = draft.copy(agentId = profile?.id)
         _agentProfile.value = profile
+        rememberDraftDefaults()
         viewModelScope.launch {
             val config = withContext(Dispatchers.IO) { app.store.loadConfig() }
             conversation?.let { updateResolvedModel(ModelResolver.resolve(it, config, agents)) }
@@ -317,17 +329,10 @@ class ChatViewModel(
         conv.modelOverride = model
         val selected = _modelOptions.value.firstOrNull { it.first.id == providerId && it.second == model }
         val resolved = selected?.first?.copy(model = model)
-        val priorEffort = conv.reasoningEffortOverride
-        val resetUnsupportedGatewayEffort = resolved?.let { next ->
-            priorEffort != null && next.type in setOf(
-                com.example.myapplication.data.model.ProviderType.GEMINI,
-                com.example.myapplication.data.model.ProviderType.CUSTOM
-            ) && priorEffort !in reasoningSupportFor(next.type, next.model).efforts
-        } == true
-        if (resetUnsupportedGatewayEffort) {
-            conv.reasoningEffortOverride = null
-            _error.value = "新模型不支持当前会话的思考强度，已改为跟随模型配置。"
-        }
+        conv.reasoningEffortOverride = resolved?.sessionEffort(
+            conv.reasoningEffortOverride ?: app.store.loadNewChatDefaults().reasoningEffort
+        )
+        rememberDraftDefaults()
         val snapshot = conv.copy(messages = conv.messages.toMutableList())
         val previousSave = modelSaveJob
         modelSaveJob = viewModelScope.launch {
@@ -350,8 +355,10 @@ class ChatViewModel(
         if (_isChild.value || _compacting.value || _historyBusy.value) return
         if (effort != null && effort !in _reasoningSupport.value?.efforts.orEmpty()) return
         val conv = conversation ?: return
-        conv.reasoningEffortOverride = effort
-        _reasoningEffortOverride.value = effort
+        val selected = effort ?: _reasoningSupport.value?.defaultEffort()
+        conv.reasoningEffortOverride = selected
+        _reasoningEffortOverride.value = selected
+        rememberDraftDefaults()
         // AgentEngine saves this volatile field with its final conversation save. Encoding the
         // mutable live conversation during a stream can otherwise race the provider callbacks.
         if (_streaming.value) return
@@ -419,12 +426,38 @@ class ChatViewModel(
         compactJob?.cancel()
     }
 
+    fun currentFilePath(path: String): String? = try {
+        val current = conversation ?: error("会话尚未加载")
+        PermissionSession(app.store, current, app.permissionCoordinator).readableFile(path).canonicalPath
+    } catch (error: Exception) {
+        _error.value = error.message ?: "无法打开文件"
+        null
+    }
+
+    private fun rememberDraftDefaults() {
+        val draft = conversation?.takeIf { isDraft && it.id.isEmpty() } ?: return
+        val defaults = NewChatDefaults.fromDraft(draft, app.store.loadNewChatDefaults())
+        val write = app.rememberNewChatDefaults(defaults)
+        viewModelScope.launch {
+            try { write.await() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { _error.value = error.message ?: "新会话默认设置保存失败" }
+        }
+    }
+
     private fun updateResolvedModel(resolved: ProviderConfig?) {
+        conversation?.let { conv ->
+            if (resolved != null) conv.reasoningEffortOverride = resolved.sessionEffort(conv.reasoningEffortOverride)
+        }
         currentResolvedModel = resolved
         selectedProviderId.value = resolved?.id
         _currentModel.value = resolved?.model.orEmpty()
-        _reasoningSupport.value = resolved?.let { reasoningSupportFor(it.type, it.model) }
-        _modelReasoningEffort.value = resolved?.reasoningEffort
+        _reasoningSupport.value = resolved?.let {
+            val support = reasoningSupportFor(it.type, it.model)
+            if (it.type == com.example.myapplication.data.model.ProviderType.ANTHROPIC) {
+                support.copy(protocol = com.example.myapplication.data.model.anthropicThinkingProtocol(it.model, it.anthropicThinkingMode))
+            } else support
+        }
         _reasoningEffortOverride.value = conversation?.reasoningEffortOverride
     }
 
@@ -491,32 +524,64 @@ class ChatViewModel(
         return requireNotNull(observationJob)
     }
 
-    fun updatePermissions(mode: PermissionMode, directories: List<String>) {
-        if (_isChild.value || _streaming.value || _historyBusy.value) return
+    suspend fun updatePermissions(mode: PermissionMode, directories: List<String>, workingDirectory: String?): String? {
+        if (_isChild.value || _streaming.value || _historyBusy.value) return "当前会话正在处理任务，请稍后再调整"
+        val conv = conversation ?: return "会话尚未加载"
         _historyBusy.value = true
-        viewModelScope.launch {
-            try {
-                val conv = conversation ?: return@launch
-                withContext(Dispatchers.IO) {
+        return try {
+            // Publish only after the complete settings snapshot is saved; cancellation cannot
+            // leave the model, visible controls and disk with different directory policies.
+            withContext(NonCancellable) {
+                val proposed = withContext(Dispatchers.IO) {
                     val canonical = directories.map { directory ->
-                        require(java.io.File(directory).isAbsolute) { "目录范围请填写绝对路径" }
-                        java.io.File(directory).canonicalPath
+                        val file = java.io.File(directory)
+                        require(file.isAbsolute && file.isDirectory && file.canRead()) { "额外目录不可访问：$directory" }
+                        file.canonicalPath
                     }.distinct()
-                    conv.allowedDirectories = canonical
-                    conv.permissionMode = mode
-                    permissionSession?.setMode(mode)
-                    if (conv.id.isNotEmpty()) app.store.saveConversation(conv)
+                    val next = conv.copy(allowedDirectories = canonical, workingDirectory = workingDirectory,
+                        permissionMode = mode, messages = conv.messages.toMutableList())
+                    next.workingDirectory = PermissionSession(app.store, next, app.permissionCoordinator)
+                        .files.validateWorkingDirectory(workingDirectory)
+                    if (next.id.isNotEmpty()) app.store.saveConversation(next)
+                    next
                 }
-                _permissionMode.value = conv.permissionMode
+                conv.allowedDirectories = proposed.allowedDirectories
+                conv.workingDirectory = proposed.workingDirectory
+                conv.permissionMode = mode
+                _permissionMode.value = mode
                 _scope.value = conv.allowedDirectories
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                _error.value = error.message ?: "权限保存失败"
-            } finally {
-                _historyBusy.value = false
+                _workingDirectory.value = conv.workingDirectory
+                rememberDraftDefaults()
             }
+            null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            error.message ?: "权限保存失败"
+        } finally {
+            _historyBusy.value = false
         }
+    }
+    suspend fun renameConversation(title: String): String? {
+        val name = title.trim()
+        if (name.isEmpty()) return "请输入会话标题"
+        if (_isChild.value || _streaming.value || _historyBusy.value || isDraft) return "请在会话空闲时修改标题"
+        val conv = conversation ?: return "会话尚未加载"
+        _historyBusy.value = true
+        return try {
+            withContext(NonCancellable) {
+                withContext(Dispatchers.IO) {
+                    app.store.saveConversation(conv.copy(title = name, messages = conv.messages.toMutableList()))
+                }
+                conv.title = name
+                _title.value = name
+            }
+            null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            error.message ?: "标题保存失败"
+        } finally { _historyBusy.value = false }
     }
 
     fun stopChild(reason: String) {
@@ -759,14 +824,9 @@ fun ChatScreen(
     })
     val vm = sessions.session(app, sessionKey, conversationId, draftAgentId)
     val committed by vm.committedId.collectAsStateWithLifecycle()
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    LaunchedEffect(committed) {
-        committed?.let { id ->
-            lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
-                onCommitted?.invoke(id)
-            }
-        }
-    }
+    // Draft commit changes the content in place. Approval matching must use the newly saved ID.
+    val activeConversationId = committed ?: conversationId
+    LaunchedEffect(vm, committed) { committed?.let { onCommitted?.invoke(it) } }
     val messages by vm.messages.collectAsStateWithLifecycle()
     val title by vm.title.collectAsStateWithLifecycle()
     val agentProfile by vm.agentProfile.collectAsStateWithLifecycle()
@@ -777,7 +837,6 @@ fun ChatScreen(
     val contextOverview by vm.contextOverview.collectAsStateWithLifecycle()
     val reasoningSupport by vm.reasoningSupport.collectAsStateWithLifecycle()
     val reasoningEffortOverride by vm.reasoningEffortOverride.collectAsStateWithLifecycle()
-    val modelReasoningEffort by vm.modelReasoningEffort.collectAsStateWithLifecycle()
     val compacting by vm.compacting.collectAsStateWithLifecycle()
     val compactionProgress by vm.compactionProgress.collectAsStateWithLifecycle()
     val toolStatus by vm.toolStatus.collectAsStateWithLifecycle()
@@ -792,9 +851,10 @@ fun ChatScreen(
     val sendRevision by vm.sendRevision.collectAsStateWithLifecycle()
     val permissionMode by vm.permissionMode.collectAsStateWithLifecycle()
     val fileScope by vm.fileScope.collectAsStateWithLifecycle()
+    val workingDirectory by vm.workingDirectory.collectAsStateWithLifecycle()
     val plan by vm.plan.collectAsStateWithLifecycle()
     val pending by app.permissionCoordinator.pending.collectAsStateWithLifecycle()
-    pending.firstOrNull { it.conversationId == conversationId }?.let { request ->
+    pending.firstOrNull { it.conversationId == activeConversationId }?.let { request ->
         PermissionRequestDialog(request) { decision, feedback ->
             app.permissionCoordinator.resolve(request.id, decision, feedback)
         }
@@ -809,7 +869,7 @@ fun ChatScreen(
 
     LaunchedEffect(error) {
         error?.let {
-            snackbar.showSnackbar(it, withDismissAction = true, duration = androidx.compose.material3.SnackbarDuration.Indefinite)
+            snackbar.showSnackbar(com.example.myapplication.ui.components.ErrorFeedback(it))
             vm.clearError()
         }
     }
@@ -821,10 +881,13 @@ fun ChatScreen(
         onStopOrDispose { refresh.cancel() }
     }
     ChatContent(
-        isDraft = conversationId == null,
+        conversationKey = sessionKey,
+        onRenameConversation = vm::renameConversation,
+        isDraft = activeConversationId == null,
+        hasGlobalDrawer = openDrawer != null,
         availableAgents = availableAgents,
         onSelectAgent = vm::selectDraftAgent,
-        pendingCommandApproval = pending.any { it.conversationId == conversationId && it.kind == com.example.myapplication.agent.PermissionRequestKind.COMMAND },
+        pendingCommandApproval = pending.any { it.conversationId == activeConversationId && it.kind == com.example.myapplication.agent.PermissionRequestKind.COMMAND },
         messages = messages,
         title = title,
         agentProfile = agentProfile,
@@ -841,7 +904,6 @@ fun ChatScreen(
         contextOverview = contextOverview,
         reasoningSupport = reasoningSupport,
         reasoningEffortOverride = reasoningEffortOverride,
-        modelReasoningEffort = modelReasoningEffort,
         compacting = compacting,
         compactionProgress = compactionProgress,
         onUpdateReasoningEffort = vm::updateReasoningEffort,
@@ -849,7 +911,7 @@ fun ChatScreen(
         onCancelCompaction = vm::cancelCompaction,
         onSendMessage = { vm.send(it) },
         onStop = { vm.stop() },
-        onViewFile = { path -> navController.safeNavigateDirect(Routes.fileView(path)) },
+        onViewFile = { path -> vm.currentFilePath(path)?.let { navController.safeNavigateDirect(Routes.fileView(it)) } },
         snackbarHostState = snackbar,
         attachments = attachments,
         importing = importing,
@@ -858,6 +920,8 @@ fun ChatScreen(
         waitingForParentApproval = isChild && pending.any { it.conversationId == childSnapshot?.parentConversationId },
         permissionMode = permissionMode,
         fileScope = fileScope,
+        workingDirectory = workingDirectory,
+        defaultWorkingDirectory = app.store.workspaceDir.absolutePath,
         planContent = plan,
         onUpdatePermissions = vm::updatePermissions,
         historyBusy = historyBusy,
@@ -894,7 +958,6 @@ fun ChatContent(
     contextOverview: ContextOverview? = null,
     reasoningSupport: ReasoningSupport? = null,
     reasoningEffortOverride: ReasoningEffort? = null,
-    modelReasoningEffort: ReasoningEffort? = null,
     compacting: Boolean = false,
     compactionProgress: String? = null,
     onUpdateReasoningEffort: (ReasoningEffort?) -> Unit = {},
@@ -911,8 +974,10 @@ fun ChatContent(
     waitingForParentApproval: Boolean = false,
     permissionMode: PermissionMode = PermissionMode.ACCEPT_EDIT,
     fileScope: List<String> = emptyList(),
+    workingDirectory: String? = null,
+    defaultWorkingDirectory: String = "",
     planContent: String? = null,
-    onUpdatePermissions: (PermissionMode, List<String>) -> Unit = { _, _ -> },
+    onUpdatePermissions: suspend (PermissionMode, List<String>, String?) -> String? = { _, _, _ -> null },
     childExecutionStatus: String? = null,
     childStopReason: String? = null,
     canStopChild: Boolean = false,
@@ -932,10 +997,15 @@ fun ChatContent(
     onConfigureModel: () -> Unit = {},
     selectedProviderId: String? = null,
     isDraft: Boolean = false,
+    hasGlobalDrawer: Boolean = false,
     availableAgents: List<AgentProfile> = emptyList(),
-    onSelectAgent: (AgentProfile?) -> Unit = {}
+    onSelectAgent: (AgentProfile?) -> Unit = {},
+    conversationKey: String = "",
+    onRenameConversation: suspend (String) -> String? = { null }
 ) {
     val listState = rememberLazyListState()
+    var renameDialog by rememberSaveable(conversationKey) { mutableStateOf(false) }
+    if (renameDialog) RenameConversationDialog(title, onDismiss = { renameDialog = false }, onSave = onRenameConversation)
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val isUserDragging by listState.interactionSource.collectIsDraggedAsState()
@@ -966,9 +1036,9 @@ fun ChatContent(
             confirmButton = { UiTextButton(onClick = { onDeleteMessage(message.id); deletingMessage = null }) { Text("删除") } },
             dismissButton = { UiTextButton(onClick = { deletingMessage = null }) { Text("取消") } })
     }
-    if (showPermissions) SessionPermissionsDialog(permissionMode, fileScope,
-        onDismiss = { showPermissions = false }, onSave = { mode, directories ->
-            onUpdatePermissions(mode, directories); showPermissions = false
+    if (showPermissions) SessionPermissionsDialog(permissionMode, fileScope, workingDirectory, defaultWorkingDirectory,
+        onDismiss = { showPermissions = false }, onSave = { mode, directories, directory ->
+            onUpdatePermissions(mode, directories, directory)
         })
     if (showPlan) PlanDocumentDialog(planContent.orEmpty()) { showPlan = false }
     if (showContextUsage) {
@@ -984,6 +1054,10 @@ fun ChatContent(
     }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    androidx.activity.compose.BackHandler(enabled = drawerState.isOpen) {
+        scope.launch { drawerState.close() }
+    }
+
     var stopDialog by remember { mutableStateOf(false) }
     var stopReason by rememberSaveable { mutableStateOf("") }
     val toolResults = remember(messages) { messages.filter { it.role == "tool" }.associateBy { it.toolCallId } }
@@ -1067,7 +1141,8 @@ fun ChatContent(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
-        gesturesEnabled = !readOnly,
+        // Closed session details must not intercept the global drawer's left-edge gesture.
+        gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             SessionDrawer(children, onOpen = { id ->
                 scope.launch { drawerState.close(); onOpenChild(id) }
@@ -1077,27 +1152,29 @@ fun ChatContent(
         }
     ) {
         UiScaffold(
-            snackbarHost = { SnackbarHost(snackbarHostState) },
+            snackbarHost = { TopFeedbackHost(snackbarHostState) },
             topBar = {
                 TopAppBar(
                     expandedHeight = 64.dp,
                     title = {
                         if (isDraft) Text("AgentApp", fontSize = 20.sp)
-                        else Column {
-                            Text(agentProfile?.name ?: "通用助手", style = MaterialTheme.typography.titleMedium)
-                            Row(verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.clickable { scope.launch { drawerState.open() } }) {
+                        else Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
                                 Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.titleMedium)
+                                Text(agentProfile?.name ?: "通用助手", maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f, false))
-                                Icon(Icons.Default.ExpandMore, null, Modifier.size(16.dp))
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (!readOnly) IconButton(onClick = { renameDialog = true }, enabled = !streaming && !historyBusy) {
+                                Icon(Icons.Outlined.Edit, "修改会话标题", Modifier.size(17.dp))
                             }
                         }
                     },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
-                            Icon(if (isDraft) Icons.Default.Menu else Icons.AutoMirrored.Filled.ArrowBack,
-                                if (isDraft) "打开导航" else "返回", Modifier.size(22.dp))
+                            Icon(if (hasGlobalDrawer || isDraft) Icons.Default.Menu else Icons.AutoMirrored.Filled.ArrowBack,
+                                if (hasGlobalDrawer || isDraft) "打开导航" else "返回", Modifier.size(22.dp))
                         }
                     },
                     actions = {
@@ -1130,13 +1207,14 @@ fun ChatContent(
                         shadowElevation = 0.dp) {
                         Column(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 13.dp, bottom = 6.dp)) {
                             AnimatedVisibility(attachments.isNotEmpty()) {
-                                LazyColumn(Modifier.heightIn(max = 150.dp)) {
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     items(attachments, key = { it.id }) { attachment ->
                                         Box(Modifier.animateItem()) {
                                             AttachmentChip(attachment, attachmentFile(attachment),
                                                 onToggle = { onToggleAttachment(attachment.id) },
                                                 onRemove = { onRemoveAttachment(attachment.id) },
-                                                enabled = !streaming && !importing && !historyBusy)
+                                                enabled = !streaming && !importing && !historyBusy,
+                                                compact = true)
                                         }
                                     }
                                 }
@@ -1197,11 +1275,11 @@ fun ChatContent(
                         horizontalArrangement = Arrangement.SpaceBetween) {
                         UiTextButton(onClick = { showPermissions = true }, enabled = !streaming && !historyBusy,
                             contentPadding = PaddingValues(horizontal = 2.dp)) {
-                            Icon(Icons.Outlined.VerifiedUser, null, Modifier.size(14.dp))
-                            Text(permissionMode.label, fontSize = 10.sp)
-                            Icon(Icons.Default.ExpandMore, null, Modifier.size(12.dp))
+                            Icon(Icons.Outlined.VerifiedUser, null, Modifier.size(16.dp))
+                            Text(permissionMode.label, fontSize = 12.sp)
+                            Icon(Icons.Default.ExpandMore, null, Modifier.size(14.dp))
                         }
-                        ReasoningEffortMenu(reasoningSupport, reasoningEffortOverride, modelReasoningEffort,
+                        ReasoningEffortMenu(reasoningSupport, reasoningEffortOverride,
                             !compacting, onUpdateReasoningEffort, Modifier.weight(1f))
                         CompactContextUsage(contextOverview) { showContextUsage = true }
                     }
@@ -1231,6 +1309,7 @@ fun ChatContent(
                     }
                     items(displayMessages, key = { it.id }) { msg ->
                         MessageBubble(
+                            conversationKey = conversationKey,
                             msg = msg,
                             agentProfile = agentProfile,
                             streaming = streaming && msg.id == streamingMessageId,
@@ -1352,7 +1431,8 @@ internal fun MessageBubble(
     onOpenAttachment: (MessageAttachment) -> Unit = {},
     canEdit: Boolean = false,
     onEdit: () -> Unit = {},
-    onDelete: () -> Unit = {}
+    onDelete: () -> Unit = {},
+    conversationKey: String = ""
 ) {
     when (msg.role) {
         "user" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -1389,7 +1469,7 @@ internal fun MessageBubble(
                 MarkdownContent(msg.content, Modifier.fillMaxWidth().padding(vertical = 6.dp), streaming)
             }
             msg.toolCalls.forEach { call ->
-                androidx.compose.runtime.key(msg.id, call.id) {
+                androidx.compose.runtime.key(conversationKey, msg.id, call.id) {
                 ToolActivityRow(call, toolResults[call.id], running && activeToolCallId == call.id,
                     child = children.firstOrNull { it.parentToolCallId == call.id },
                     onOpenChild = onOpenChild, onViewFile = onViewFile, queued = running && activeToolCallId != call.id, allowFileNavigation = allowFileNavigation,

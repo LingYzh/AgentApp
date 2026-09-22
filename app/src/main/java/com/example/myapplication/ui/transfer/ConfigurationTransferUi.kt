@@ -8,20 +8,26 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import com.example.myapplication.ui.components.UiTextButton
+import com.example.myapplication.ui.components.FormSection
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -259,6 +265,7 @@ fun ConfigurationTransferHost(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun ExportOptionsDialog(
     kind: TransferKind,
     selectedCount: Int?,
@@ -269,65 +276,76 @@ private fun ExportOptionsDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit
 ) {
-    AlertDialog(
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text("导出${transferLabel(kind)}") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                selectedCount?.let { Text("将导出所选 $it 项。") }
-                if (kind == TransferKind.PROVIDERS) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onIncludeApiKeysChange(!includeApiKeys) },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = includeApiKeys,
-                            onCheckedChange = onIncludeApiKeysChange
+        sheetState = sheetState
+    ) {
+        Column(
+            Modifier.fillMaxWidth().fillMaxHeight(0.9f).imePadding()
+                .padding(horizontal = 22.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text("导出${transferLabel(kind)}", style = MaterialTheme.typography.titleLarge)
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                FormSection("导出内容") {
+                    selectedCount?.let { Text("将导出所选 $it 项。") }
+                    if (kind == TransferKind.PROVIDERS) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onIncludeApiKeysChange(!includeApiKeys) },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = includeApiKeys,
+                                onCheckedChange = onIncludeApiKeysChange
+                            )
+                            Text("包含 API Key 和附加请求头")
+                        }
+                        Text(
+                            "未勾选时不导出 API Key 字段和附加请求头。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Text("包含 API Key 和附加请求头")
-                    }
-                    Text(
-                        "未勾选时不导出 API Key 字段和附加请求头。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else if (kind == TransferKind.AGENTS) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onIncludeConversationsChange(!includeConversations) },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = includeConversations,
-                            onCheckedChange = onIncludeConversationsChange
+                    } else if (kind == TransferKind.AGENTS) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onIncludeConversationsChange(!includeConversations) },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = includeConversations,
+                                onCheckedChange = onIncludeConversationsChange
+                            )
+                            Text("包含所属会话")
+                        }
+                        Text(
+                            "包含头像；会话仅含记录，不包含工作区文件、技能或 Provider 配置。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Text("包含所属会话")
+                    } else {
+                        Text(if (kind == TransferKind.CONVERSATIONS)
+                            "导出所选会话的完整消息和工具记录；不包含 Agent、Provider 配置或工作区文件。"
+                            else "导出所选记忆的标题、正文和时间信息。")
                     }
-                    Text(
-                        "包含头像；会话仅含记录，不包含工作区文件、技能或 Provider 配置。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    Text(if (kind == TransferKind.CONVERSATIONS)
-                        "导出所选会话的完整消息和工具记录；不包含 Agent、Provider 配置或工作区文件。"
-                        else "导出所选记忆的标题、正文和时间信息。")
                 }
             }
-        },
-        dismissButton = {
-            UiTextButton(onClick = onDismiss) { Text("取消") }
-        },
-        confirmButton = {
-            UiTextButton(onClick = onConfirm) { Text("选择保存位置") }
+            Row(
+                Modifier.fillMaxWidth().navigationBarsPadding(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)
+            ) {
+                UiTextButton(onClick = onDismiss) { Text("取消") }
+                UiTextButton(onClick = onConfirm) { Text("选择保存位置") }
+            }
         }
-    )
+    }
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun ImportSummaryDialog(
     prepared: PreparedImport,
     mode: ImportMode,
@@ -337,14 +355,21 @@ private fun ImportSummaryDialog(
 ) {
     val preview = prepared.preview
     val hasConflicts = preview.conflicts.isNotEmpty()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text("确认导入${transferLabel(preview.kind)}") },
-        text = {
+        sheetState = sheetState
+    ) {
+        Column(
+            Modifier.fillMaxWidth().fillMaxHeight(0.9f).imePadding()
+                .padding(horizontal = 22.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text("确认导入${transferLabel(preview.kind)}", style = MaterialTheme.typography.titleLarge)
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
                     if (preview.kind == TransferKind.PROVIDERS) {
@@ -376,49 +401,54 @@ private fun ImportSummaryDialog(
                         style = MaterialTheme.typography.bodySmall)
                 }
                 if (hasConflicts) {
-                    Text("发现 ${preview.conflicts.size} 个冲突，请选择处理方式。")
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 160.dp)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    FormSection(
+                        title = "冲突处理",
+                        description = "发现 ${preview.conflicts.size} 个冲突，请选择处理方式。"
                     ) {
-                        preview.conflicts.forEach { name ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 160.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            preview.conflicts.forEach { name ->
+                                Text(
+                                    text = name,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        ImportModeOption(
+                            selected = mode == ImportMode.UPDATE,
+                            label = "更新已有",
+                            onClick = { onModeChange(ImportMode.UPDATE) }
+                        )
+                        ImportModeOption(
+                            selected = mode == ImportMode.COPY,
+                            label = "作为副本导入",
+                            onClick = { onModeChange(ImportMode.COPY) }
+                        )
+                        if (preview.kind == TransferKind.PROVIDERS && mode == ImportMode.COPY) {
                             Text(
-                                text = name,
+                                "副本不会替换现有 Agent 使用的模型配置；需要时请在 Agent 中重新选择。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
-                    ImportModeOption(
-                        selected = mode == ImportMode.UPDATE,
-                        label = "更新已有",
-                        onClick = { onModeChange(ImportMode.UPDATE) }
-                    )
-                    ImportModeOption(
-                        selected = mode == ImportMode.COPY,
-                        label = "作为副本导入",
-                        onClick = { onModeChange(ImportMode.COPY) }
-                    )
-                    if (preview.kind == TransferKind.PROVIDERS && mode == ImportMode.COPY) {
-                        Text(
-                            "副本不会替换现有 Agent 使用的模型配置；需要时请在 Agent 中重新选择。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
             }
-        },
-        dismissButton = {
-            UiTextButton(onClick = onDismiss) { Text("取消") }
-        },
-        confirmButton = {
-            UiTextButton(onClick = onConfirm) { Text("导入") }
+            Row(
+                Modifier.fillMaxWidth().navigationBarsPadding(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)
+            ) {
+                UiTextButton(onClick = onDismiss) { Text("取消") }
+                UiTextButton(onClick = onConfirm) { Text("导入") }
+            }
         }
-    )
+    }
 }
 
 @Composable

@@ -12,27 +12,31 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import com.example.myapplication.ui.components.UiTextButton
@@ -43,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,15 +65,15 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
 import com.example.myapplication.AgentApp
-import com.example.myapplication.Routes
 import com.example.myapplication.data.backup.TransferKind
-import com.example.myapplication.safeNavigateDirect
 import com.example.myapplication.ui.theme.ExpressiveTokens
 import com.example.myapplication.ui.agents.AgentAvatar
 import com.example.myapplication.data.model.AgentProfile
 import com.example.myapplication.data.model.ChatMessage
 import com.example.myapplication.data.model.Conversation
 import com.example.myapplication.ui.components.ListSelectionBar
+import com.example.myapplication.ui.components.ListPageHeader
+import com.example.myapplication.ui.components.TopFeedbackHost
 import com.example.myapplication.ui.components.rememberListSelection
 import com.example.myapplication.ui.theme.AgentTheme
 import com.example.myapplication.ui.transfer.ConfigurationTransferHost
@@ -76,6 +81,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -98,6 +104,13 @@ class ConversationsViewModel(
     private val _message = MutableStateFlow<String?>(null)
     val message = _message.asStateFlow()
 
+    private val _deletedConversationIds = MutableStateFlow<Set<String>>(emptySet())
+    val deletedConversationIds = _deletedConversationIds.asStateFlow()
+
+    fun acknowledgeDeleted(ids: Set<String>) {
+        _deletedConversationIds.update { it - ids }
+    }
+
     private suspend fun refreshData() {
         _conversations.value = app.store.listRootConversations()
         _agents.value = app.store.loadAgents()
@@ -113,6 +126,7 @@ class ConversationsViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             beforeDelete(setOf(id))
             app.store.deleteConversation(id)
+            _deletedConversationIds.update { it + id }
             refreshData()
         }
     }
@@ -138,7 +152,10 @@ class ConversationsViewModel(
                 var failure: Exception? = null
                 try {
                     beforeDelete(selectedIds)
-                    selectedIds.forEach { app.store.deleteConversation(it) }
+                    selectedIds.forEach { id ->
+                        app.store.deleteConversation(id)
+                        _deletedConversationIds.update { it + id }
+                    }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: Exception) {
@@ -182,6 +199,14 @@ fun ConversationsScreen(navController: NavHostController, openDrawer: () -> Unit
     val vm: ConversationsViewModel = viewModel(factory = viewModelFactory {
         initializer { ConversationsViewModel(app, sessions::stopForDeletion) }
     })
+    val deletedIds by vm.deletedConversationIds.collectAsStateWithLifecycle()
+    LaunchedEffect(deletedIds, navController) {
+        if (deletedIds.isNotEmpty()) {
+            // Navigation belongs to the current UI, never a controller captured before rotation.
+            navController.clearDeletedHomeChat(deletedIds)
+            vm.acknowledgeDeleted(deletedIds)
+        }
+    }
     LifecycleStartEffect(Unit) {
         vm.refresh()
         onStopOrDispose { }
@@ -208,9 +233,9 @@ fun ConversationsScreen(navController: NavHostController, openDrawer: () -> Unit
             agents = agents,
             agentLabel = { vm.agentLabel(it) },
             onOpenDrawer = openDrawer,
-            onSelectConversation = { navController.safeNavigateDirect(Routes.chat(it)) },
+            onSelectConversation = { navController.showHomeChat(conversationId = it) },
             onCreateConversation = { agentId ->
-                navController.safeNavigateDirect(Routes.newChat(agentId))
+                navController.showHomeChat(agentId = agentId)
             },
             onRenameConversation = { id, title -> vm.rename(id, title) },
             onDeleteConversation = { vm.delete(it) },
@@ -246,10 +271,34 @@ fun ConversationsContent(
     var renameTarget by remember { mutableStateOf<Conversation?>(null) }
     var deleteTarget by remember { mutableStateOf<Conversation?>(null) }
     var showAgentPicker by remember { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
     val selection = rememberListSelection(conversations.map { it.id }, conversations.associate { it.id to it.title })
+    val normalizedQuery = query.trim()
+    val dayStart = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    val todayStart = dayStart.timeInMillis
+    val yesterdayStart = dayStart.apply { add(java.util.Calendar.DAY_OF_YEAR, -1) }.timeInMillis
+    fun dateGroup(conversation: Conversation): String = when {
+        conversation.createdAt >= todayStart -> "今天"
+        conversation.createdAt >= yesterdayStart -> "昨天"
+        else -> "更早"
+    }
+    val filteredConversations = remember(conversations, agents, normalizedQuery) {
+        conversations.filter { conversation ->
+            normalizedQuery.isBlank() || listOfNotNull(
+                conversation.title,
+                conversation.messages.lastOrNull()?.content,
+                agentLabel(conversation.agentId)
+            ).any { it.contains(normalizedQuery, ignoreCase = true) }
+        }
+    }
 
     UiScaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { TopFeedbackHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("对话") },
@@ -257,7 +306,7 @@ fun ConversationsContent(
                     IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "菜单") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                 ),
@@ -285,57 +334,62 @@ fun ConversationsContent(
                 )
             }
         },
-        floatingActionButton = {
-            if (!selection.active) {
-                FloatingActionButton(onClick = { showAgentPicker = true }) {
-                    Icon(Icons.Filled.Add, "新对话")
-                }
-            }
-        }
     ) { padding ->
-        if (conversations.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.padding(24.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Chat,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                        modifier = Modifier.size(56.dp)
-                    )
-                    Text(
-                        "还没有对话记录",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        "点击右下角按钮开启与智能体的第一次对话",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(
+                start = ExpressiveTokens.ScreenHorizontalPadding,
+                top = 8.dp,
+                end = ExpressiveTokens.ScreenHorizontalPadding,
+                bottom = if (selection.active) 16.dp else 24.dp
+            )
+        ) {
+            item(key = "page-header") {
+                ListPageHeader(
+                    title = "继续之前的想法",
+                    description = "回到历史对话，继续你的工作。",
+                    query = query,
+                    onQueryChange = { query = it },
+                    searchPlaceholder = "搜索对话",
+                    actionLabel = if (selection.active || busy) null else "新对话",
+                    onAction = if (selection.active || busy) null else ({ showAgentPicker = true })
+                )
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(
-                    start = ExpressiveTokens.ScreenHorizontalPadding,
-                    top = 8.dp,
-                    end = ExpressiveTokens.ScreenHorizontalPadding,
-                    bottom = if (selection.active) 16.dp else ExpressiveTokens.FabSafeBottomPadding
-                ),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(conversations, key = { it.id }) { conv ->
-                    val boundAgent = remember(conv.agentId, agents) {
-                        conv.agentId?.let { id -> agents.firstOrNull { it.id == id } }
+            if (filteredConversations.isEmpty()) {
+                item(key = "empty-state") {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 44.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Chat,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Text(
+                            if (normalizedQuery.isBlank()) "还没有对话记录" else "没有匹配的对话",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            if (normalizedQuery.isBlank()) "新对话会在首次发送后保存到历史记录。" else "换个关键词试试。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            } else {
+                itemsIndexed(filteredConversations, key = { _, conv -> conv.id }) { index, conv ->
+                    val group = dateGroup(conv)
+                    if (index == 0 || dateGroup(filteredConversations[index - 1]) != group) {
+                        Text(group, Modifier.padding(top = 20.dp, bottom = 10.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     ConversationItem(
                         conv = conv,
-                        agent = boundAgent,
                         agentLabel = agentLabel(conv.agentId),
                         selectionMode = selection.active,
                         selected = conv.id in selection.selectedIds,
@@ -435,7 +489,7 @@ private fun AgentPickRow(
 ) {
     Card(
         shape = ExpressiveTokens.CardShape,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         onClick = onClick,
         modifier = Modifier.fillMaxWidth()
@@ -468,7 +522,6 @@ private fun AgentPickRow(
 @Composable
 private fun ConversationItem(
     conv: Conversation,
-    agent: AgentProfile?,
     agentLabel: String?,
     onClick: () -> Unit,
     onRename: () -> Unit,
@@ -477,15 +530,13 @@ private fun ConversationItem(
     selected: Boolean = false,
     onToggle: () -> Unit = {}
 ) {
-    Card(
-        shape = ExpressiveTokens.CardShape,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth()
-    ) {
+    var menuExpanded by remember(conv.id) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 4.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (selectionMode) {
@@ -495,12 +546,6 @@ private fun ConversationItem(
                 )
                 Spacer(Modifier.width(8.dp))
             }
-            AgentAvatar(
-                emoji = agent?.emoji ?: "🤖",
-                avatarPath = agent?.avatarPath,
-                size = 42.dp
-            )
-            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -510,17 +555,10 @@ private fun ConversationItem(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
-                    agentLabel?.let {
-                        Text(
-                            "  $it",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
                 }
                 val preview = conv.messages.lastOrNull()?.content?.take(60) ?: "(空对话)"
                 Text(
-                    preview,
+                    listOfNotNull(agentLabel, preview).joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -535,10 +573,36 @@ private fun ConversationItem(
                 )
             }
             if (!selectionMode) {
-                IconButton(onClick = onRename) { Icon(Icons.Filled.Edit, "重命名") }
-                IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, "删除") }
+                androidx.compose.foundation.layout.Box {
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(Icons.Filled.MoreVert, "更多操作")
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("重命名") },
+                            onClick = {
+                                menuExpanded = false
+                                onRename()
+                            },
+                            leadingIcon = { Icon(Icons.Filled.Edit, null) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("删除") },
+                            onClick = {
+                                menuExpanded = false
+                                onDelete()
+                            },
+                            leadingIcon = { Icon(Icons.Filled.Delete, null) }
+                        )
+                    }
+                }
+                Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     }
 }
 
@@ -647,7 +711,6 @@ private fun ConversationItemPreview() {
     AgentTheme(themeMode = "light") {
         ConversationItem(
             conv = conv,
-            agent = AgentProfile(id = "a1", name = "专属女仆", emoji = "🐱"),
             agentLabel = "🐱 专属女仆",
             onClick = {},
             onRename = {},

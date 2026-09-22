@@ -13,9 +13,33 @@ class PermissionSession(
 ) {
     private val safeId = conversation.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
     val planPath: String = ".plans/$safeId.md"
-    val files = AgentFiles(store) { conversation.allowedDirectories }
+    val files = AgentFiles(
+        store = store,
+        workingDirectory = { conversation.workingDirectory },
+        allowedDirectories = { conversation.allowedDirectories }
+    )
 
     fun childSession(): PermissionSession = PermissionSession(store, conversation, coordinator, isChild = true)
+
+    fun workingDirectory(): File = files.workingDirectory()
+
+    fun validateWorkingDirectory(path: String?): String? = files.validateWorkingDirectory(path)
+
+    /**
+     * Resolves a shell cwd without applying file-tool directory scope. A relative override is
+     * still relative to the selected cwd; an absolute override only needs to be a real directory.
+     */
+    fun commandDirectory(path: String): File {
+        if (path.isBlank()) return workingDirectory()
+        val raw = File(path)
+        val directory = if (raw.isAbsolute) raw.canonicalFile else File(workingDirectory(), path).canonicalFile
+        require(directory.exists()) { "工作目录不存在: ${directory.path}" }
+        require(directory.isDirectory) { "工作目录不是目录: ${directory.path}" }
+        return directory
+    }
+
+    fun workingDirectoryDescription(): String = runCatching { workingDirectory().canonicalPath }
+        .getOrElse { "无效：${it.message ?: "工作目录不可用"}" }
 
     fun readPlan(): String? = runCatching {
         val workspace = store.workspaceFile(".").canonicalFile
@@ -27,15 +51,22 @@ class PermissionSession(
         if (!isChild) conversation.permissionMode = mode
     }
 
-    /** Current scope is rendered into the request context and denial messages. */
+    /** Additional file-tool directories; the working directory is always included separately. */
     fun canonicalAllowedDirectories(): List<String> = conversation.allowedDirectories
-        .map { File(it).canonicalPath }
+        .map { raw ->
+            require(File(raw).isAbsolute) { "已授权目录必须是绝对路径: $raw" }
+            File(raw).canonicalPath
+        }
         .distinct()
         .sorted()
 
-    fun scopeDescription(): String = canonicalAllowedDirectories().takeIf { it.isNotEmpty() }
-        ?.joinToString("、")
-        ?: "未限制（应用 UID 当前可访问的路径）"
+    fun scopeDescription(): String = buildString {
+        append("工作目录：${workingDirectoryDescription()}")
+        val additional = canonicalAllowedDirectories()
+        if (additional.isEmpty()) append("；额外目录：无")
+        else append("；额外目录：${additional.joinToString("、")}")
+        append("（文件工具可访问两者并集）")
+    }
 
     /**
      * Gates that do not depend on a tool argument. Argument-specific file scope and the
@@ -59,9 +90,6 @@ class PermissionSession(
         }
         if (tool == Tools.RUN_COMMAND) {
             if (conversation.permissionMode in setOf(PermissionMode.READONLY, PermissionMode.PLAN)) return modeDenied("执行命令")
-            if (conversation.allowedDirectories.isNotEmpty()) {
-                return shellScopeDenied()
-            }
         }
         if (tool in setOf(Tools.SAVE_MEMORY, Tools.DELETE_MEMORY, Tools.SAVE_SKILL)) {
             canMutate(tool)?.let { return it }
@@ -124,7 +152,6 @@ class PermissionSession(
         if (conversation.permissionMode == PermissionMode.READONLY || conversation.permissionMode == PermissionMode.PLAN) {
             return modeDenied("执行命令")
         }
-        if (conversation.allowedDirectories.isNotEmpty()) return shellScopeDenied()
         if (conversation.permissionMode == PermissionMode.AUTO) return null
         val config = store.loadConfig()
         if (command.isNotBlank() && command in config.autoApprovedCommands) return null
@@ -136,13 +163,8 @@ class PermissionSession(
             workingDirectory = cwd,
             canAlwaysAllow = lowRisk
         ))
-        if (conversation.permissionMode == PermissionMode.READONLY || conversation.permissionMode == PermissionMode.PLAN ||
-            conversation.allowedDirectories.isNotEmpty()) {
-            return if (conversation.allowedDirectories.isNotEmpty()) {
-                "命令审批期间目录范围已设置，未执行。${shellScopeDenied()}"
-            } else {
-                "命令审批期间权限模式已收紧为 ${modeLabel()}，未执行；这不是系统故障，请勿重复调用"
-            }
+        if (conversation.permissionMode == PermissionMode.READONLY || conversation.permissionMode == PermissionMode.PLAN) {
+            return "命令审批期间权限模式已收紧为 ${modeLabel()}，未执行；这不是系统故障，请勿重复调用"
         }
         return when (answer.decision) {
             PermissionDecision.ALLOW_ONCE -> null
@@ -191,21 +213,16 @@ class PermissionSession(
         } else {
             "权限模式：Plan。只可写入计划文件 $planPath；不得执行命令。"
         }
-        PermissionMode.AUTO -> if (conversation.allowedDirectories.isEmpty()) {
-            "权限模式：Auto。不会弹出应用内确认；可在应用 UID 权限范围内执行文件操作和命令。"
-        } else {
-            "权限模式：Auto。不会弹出应用内确认，但显式目录范围仍生效；" +
-                "范围外的普通文件和 shell 命令会被拒绝。应用托管的记忆和 Skill 不受外部目录范围影响，" +
-                "但仍受工具授权与当前模式约束。请在权限面板调整或清空目录范围。"
-        }
+        PermissionMode.AUTO -> "权限模式：Auto。不会弹出应用内确认；文件工具仍受当前工作目录和额外目录的并集限制。" +
+            "shell 命令不做目录沙箱，仍受 Android 权限约束。应用托管的记忆和 Skill 不受文件工具目录范围影响，但仍受工具授权与当前模式约束。"
         PermissionMode.READONLY -> "权限模式：Readonly。只能读取、检索和列出内容，不能修改或执行命令；主代理仍可进入 Plan 以仅写入计划文件。"
-    } + "\n目录范围：${scopeDescription()}。"
+    } + "\n文件工具有效范围（并集）：${scopeDescription()}。shell 命令不受此范围约束，仍受模式、审批和 Android 权限约束。"
 
-    fun scopeDenied(message: String): String = "$message；当前目录范围：${scopeDescription()}。" +
-        "请在会话的权限面板调整或清空目录范围后重试；Auto 只取消应用内确认，不会绕过该范围。" +
+    fun scopeDenied(message: String): String = "$message；当前文件工具有效范围：${scopeDescription()}。" +
+        "请在会话的权限面板调整工作目录或额外目录后重试；Auto 只取消应用内确认，不会绕过该范围。" +
         "这不是 Android 系统权限或工具回收故障，请勿反复切换模式"
 
-    fun explainSecurityDenial(message: String): String = if (message.contains("路径不在已授权目录")) {
+    fun explainSecurityDenial(message: String): String = if (message.contains("路径不在文件工具有效范围")) {
         scopeDenied(message)
     } else {
         message
@@ -221,16 +238,13 @@ class PermissionSession(
     private fun modeDenied(action: String): String =
         "当前权限模式 ${modeLabel()} 不允许$action；这不是系统故障，请勿重复调用"
 
-    private fun shellScopeDenied(): String =
-        "当前目录范围为 ${scopeDescription()}。shell 命令无法可靠限制在这些目录内，因此未执行；" +
-            "请在会话的权限面板清空目录范围后重试。Auto 只取消应用内确认，不会绕过显式目录范围；" +
-            "这不是 Android 系统权限或工具回收故障，请勿反复切换模式"
-
     private fun isPermissionMetadata(file: File): Boolean {
         val canonical = file.canonicalFile
         val conversations = store.conversationsDir.canonicalFile
         val draftReceipts = store.draftReceiptsDir.canonicalFile
+        val newChatDefaults = File(store.configFile.parentFile, "new-chat-defaults.json").canonicalFile
         return canonical == store.configFile.canonicalFile ||
+            canonical == newChatDefaults ||
             canonical == draftReceipts ||
             canonical.path.startsWith(draftReceipts.path.trimEnd(File.separatorChar) + File.separator) ||
             canonical.path.startsWith(conversations.path.trimEnd(File.separatorChar) + File.separator)

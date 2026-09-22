@@ -3,6 +3,7 @@ package com.example.myapplication.data.backup
 import com.example.myapplication.data.model.AgentProfile
 import com.example.myapplication.data.model.AppConfig
 import com.example.myapplication.data.model.Conversation
+import com.example.myapplication.data.model.NewChatDefaults
 import com.example.myapplication.data.store.FileStore
 import kotlinx.serialization.encodeToString
 import java.io.File
@@ -16,11 +17,14 @@ import java.util.zip.ZipOutputStream
 /** Stream-based full archive shared by SAF export and the pre-restore recovery copy. */
 internal class FullBackupArchive(private val store: FileStore) {
     private val root = store.configFile.parentFile!!.canonicalFile
-    private val entries = listOf("config.json", "agents.json", "conversations", "memory", "skills", "workspace", "avatars")
+    private val entries = listOf("config.json", "new-chat-defaults.json", "agents.json", "conversations", "memory", "skills", "workspace", "avatars")
 
     data class RestoreResult(val fileCount: Int, val missingAvatars: Int, val safetyBackup: File)
 
-    fun export(output: OutputStream): Int {
+    fun export(output: OutputStream): Int = synchronized(store) { exportLocked(output) }
+
+    private fun exportLocked(output: OutputStream): Int {
+        store.flushNewChatDefaults()
         var count = 0
         ZipOutputStream(output.buffered()).use { zip ->
             entries.forEach { name ->
@@ -49,7 +53,9 @@ internal class FullBackupArchive(private val store: FileStore) {
         return count
     }
 
-    fun restore(input: InputStream): RestoreResult {
+    fun restore(input: InputStream): RestoreResult = synchronized(store) { restoreLocked(input) }
+
+    private fun restoreLocked(input: InputStream): RestoreResult {
         val stage = File(root, ".restore-${UUID.randomUUID()}").apply { check(mkdir()) }
         val rollback = File(root, ".restore-old-${UUID.randomUUID()}")
         var keepRollback = false
@@ -79,6 +85,9 @@ internal class FullBackupArchive(private val store: FileStore) {
             require(count > 0) { "备份为空或不是 ZIP 文件" }
             File(stage, "config.json").takeIf { it.exists() }?.let {
                 store.json.decodeFromString<AppConfig>(it.readText())
+            }
+            File(stage, "new-chat-defaults.json").takeIf { it.exists() }?.let {
+                store.json.decodeFromString<NewChatDefaults>(it.readText())
             }
             File(stage, "conversations").walkTopDown().filter { it.isFile && it.extension == "json" }.forEach {
                 store.json.decodeFromString<Conversation>(it.readText())

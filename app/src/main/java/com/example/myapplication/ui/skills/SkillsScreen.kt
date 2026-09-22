@@ -28,10 +28,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
@@ -42,17 +40,18 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import com.example.myapplication.ui.components.UiTextButton
+import com.example.myapplication.ui.components.FormSection
+import com.example.myapplication.ui.components.PrototypeTextField
+import com.example.myapplication.ui.components.ListPageHeader
+import com.example.myapplication.ui.components.TopFeedbackHost
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -472,7 +471,19 @@ fun SkillsContent(
     onExportSelected: (Set<String>) -> Unit = {},
     busy: Boolean = false
 ) {
+    var query by rememberSaveable { mutableStateOf("") }
     val selection = rememberListSelection(skills.map { it.name })
+    val normalizedQuery = query.trim()
+    val filteredSkills = remember(skills, normalizedQuery) {
+        skills.filter { skill ->
+            normalizedQuery.isBlank() || listOf(
+                skill.name,
+                skill.description,
+                skill.version,
+                skill.license
+            ).any { it.contains(normalizedQuery, ignoreCase = true) }
+        }
+    }
     UiScaffold(
         topBar = {
             TopAppBar(
@@ -505,14 +516,14 @@ fun SkillsContent(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
                     actionIconContentColor = MaterialTheme.colorScheme.onSurface
                 )
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { TopFeedbackHost(snackbarHostState) },
         bottomBar = {
             androidx.compose.animation.AnimatedVisibility(selection.active) {
                 ListSelectionBar(
@@ -524,38 +535,44 @@ fun SkillsContent(
                 )
             }
         },
-        floatingActionButton = {
-            if (!selection.active) {
-                FloatingActionButton(onClick = { if (!busy) onNewSkill() }) {
-                    Icon(Icons.Filled.Add, "新建 Skill")
-                }
-            }
-        }
     ) { padding ->
-        if (skills.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text(
-                    "暂无 Skill。可以手动创建、导入标准 ZIP，或由 Agent 运行时自行沉淀。",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(32.dp)
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(
+                start = ExpressiveTokens.ScreenHorizontalPadding,
+                top = 8.dp,
+                end = ExpressiveTokens.ScreenHorizontalPadding,
+                bottom = if (selection.active) 16.dp else 24.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            item(key = "page-header") {
+                ListPageHeader(
+                    title = "Skills 扩展",
+                    description = "管理可复用的技能包，扩展 Agent 的工作方式。",
+                    query = query,
+                    onQueryChange = { query = it },
+                    searchPlaceholder = "搜索 Skill",
+                    actionLabel = if (selection.active || busy) null else "新建 Skill",
+                    onAction = if (selection.active || busy) null else onNewSkill
                 )
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(
-                    start = ExpressiveTokens.ScreenHorizontalPadding,
-                    top = 8.dp,
-                    end = ExpressiveTokens.ScreenHorizontalPadding,
-                    bottom = ExpressiveTokens.FabSafeBottomPadding
-                ),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(skills, key = { it.name }) { skill ->
+            if (filteredSkills.isEmpty()) {
+                item(key = "empty-state") {
+                    Text(
+                        if (normalizedQuery.isBlank()) "暂无 Skill" else "没有匹配的 Skill",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            } else {
+                items(filteredSkills, key = { it.name }) { skill ->
                     Card(
                         shape = ExpressiveTokens.CardShape,
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                            containerColor = MaterialTheme.colorScheme.surface
                         ),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         onClick = {
@@ -790,7 +807,7 @@ fun SkillEditContent(
                             Icon(Icons.Filled.Share, "导出为 ZIP")
                         }
                     }
-                    IconButton(onClick = {
+                    UiTextButton(onClick = {
                         val cleanName = formatKebabCase(name)
                         if (cleanName.isNotBlank()) {
                             onSave(
@@ -801,10 +818,10 @@ fun SkillEditContent(
                                 content
                             )
                         }
-                    }) { Icon(Icons.Filled.Check, "保存") }
+                    }) { Text("保存") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
                     actionIconContentColor = MaterialTheme.colorScheme.onSurface
@@ -818,76 +835,75 @@ fun SkillEditContent(
                 .padding(padding)
                 .imePadding()
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = ExpressiveTokens.ScreenHorizontalPadding, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("技能标识 (kebab-case)") },
-                placeholder = { Text("例如: markdown-table-formatter") },
-                supportingText = {
-                    if (name.isNotBlank() && !isNameCompliant) {
-                        Text(
-                            "推荐保存为: $kebabName",
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    } else {
-                        Text("Agent 通过 use_skill 按此标识调用，仅限英文小写、数字与连字符")
-                    }
-                },
-                trailingIcon = {
-                    if (name.isNotBlank() && !isNameCompliant) {
-                        IconButton(onClick = { name = kebabName }) {
-                            Icon(Icons.Filled.AutoFixHigh, "自动转为 kebab-case")
+            FormSection("基本信息") {
+                PrototypeTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("名称（短横线命名）") },
+                    placeholder = { Text("例如: markdown-table-formatter") },
+                    supportingText = {
+                        if (name.isNotBlank() && !isNameCompliant) {
+                            Text("推荐保存为: $kebabName")
+                        } else {
+                            Text("Agent 通过 use_skill 按此标识调用，仅限英文小写、数字与连字符")
                         }
-                    }
-                },
-                singleLine = true
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedTextField(
+                    },
+                    trailingIcon = {
+                        if (name.isNotBlank() && !isNameCompliant) {
+                            IconButton(onClick = { name = kebabName }) {
+                                Icon(Icons.Filled.AutoFixHigh, "自动转为 kebab-case")
+                            }
+                        }
+                    },
+                    singleLine = true
+                )
+                PrototypeTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("何时使用") },
+                    placeholder = { Text("清晰说明该技能的职能与激活场景") },
+                    minLines = 2
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    PrototypeTextField(
                     value = version,
                     onValueChange = { version = it },
-                    label = { Text("版本 (version)") },
+                    label = { Text("版本") },
                     placeholder = { Text("1.0.0") },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
-                )
-                OutlinedTextField(
+                    )
+                    PrototypeTextField(
                     value = license,
                     onValueChange = { license = it },
-                    label = { Text("许可证 (license)") },
+                    label = { Text("许可证") },
                     placeholder = { Text("MIT") },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
-                )
+                    )
+                }
             }
 
-            OutlinedTextField(
-                value = description,
-                onValueChange = { description = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("描述（告诉 Agent 何时该使用这个 Skill）") },
-                placeholder = { Text("清晰说明该技能的职能与激活场景") },
-                minLines = 2
-            )
-
-            OutlinedTextField(
-                value = content,
-                onValueChange = { content = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("指令正文（Markdown 格式）") },
-                placeholder = { Text("# Skill Instructions\n\n执行步骤与规范说明...") },
-                minLines = 14,
-                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-            )
-            Spacer(modifier = Modifier.height(ExpressiveTokens.FabSafeBottomPadding))
+            FormSection(
+                title = "指令正文",
+                description = "保存为 SKILL.md，可使用 Markdown 编写可复用的工作说明。"
+            ) {
+                PrototypeTextField(
+                    value = content,
+                    onValueChange = { content = it },
+                    label = { Text("Markdown 源码") },
+                    placeholder = { Text("# Skill Instructions\n\n执行步骤与规范说明...") },
+                    minLines = 14,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                )
+            }
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }

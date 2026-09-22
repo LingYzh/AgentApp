@@ -15,6 +15,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import com.example.myapplication.ui.components.InlineCodePanel
+import com.example.myapplication.ui.components.ToolRecordPanel
 import com.example.myapplication.ui.files.InlineFileDiff
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -27,11 +28,13 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.myapplication.agent.Tools
 import com.example.myapplication.data.model.ChatMessage
@@ -48,13 +51,15 @@ internal fun AttachmentChip(
     file: File?,
     onToggle: (() -> Unit)? = null,
     onRemove: (() -> Unit)? = null,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    compact: Boolean = false
 ) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.medium,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp)) {
+        modifier = (if (compact) Modifier.width(280.dp) else Modifier.fillMaxWidth().padding(horizontal = 8.dp))
+            .padding(vertical = 3.dp)) {
         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (attachment.mimeType.startsWith("image/") && file != null) {
-                AsyncImage(model = file, contentDescription = attachment.name, modifier = Modifier.size(44.dp))
+                AsyncImage(model = file, contentDescription = attachment.name, modifier = Modifier.size(if (compact) 32.dp else 44.dp))
             } else Icon(Icons.Default.Description, null, Modifier.size(24.dp))
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
@@ -83,6 +88,7 @@ internal fun ToolActivityRow(
     awaitingApproval: Boolean = false
 ) {
     var expanded by rememberSaveable(call.id) { mutableStateOf(false) }
+    val detailState = rememberSaveableStateHolder()
     val presentation = remember(call, result) { presentTool(call, result) }
     val isWrite = call.name == Tools.WRITE_FILE || call.name == Tools.EDIT_FILE
     val change = result?.takeIf { !it.isError && isWrite }?.fileChange
@@ -101,64 +107,87 @@ internal fun ToolActivityRow(
         queued -> "${presentation.title} · 等待执行"
         else -> "${presentation.title} · 未返回"
     }
-    val rotation by animateFloatAsState(if (expanded) 180f else 0f, tween(200), label = "tool chevron")
+    val rowColor = when {
+        result?.isError == true -> MaterialTheme.colorScheme.error
+        awaitingApproval -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val rotation by animateFloatAsState(if (expanded) 90f else 0f, tween(200), label = "tool chevron")
     Column(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
             .semantics { stateDescription = if (expanded) "已展开" else "已收起" }
             .clickable { expanded = !expanded },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(toolIcon(call.name), null, Modifier.size(18.dp))
-            Text(label, style = MaterialTheme.typography.labelLarge)
-            if (isWrite && completed) {
+            Icon(toolIcon(call.name), null, Modifier.size(17.dp), tint = rowColor)
+            Text(if (isWrite && completed && expanded) "已编辑的文件" else label,
+                fontSize = 14.sp, lineHeight = 21.sp, color = rowColor)
+            if (isWrite && completed && !expanded) {
                 Text((change?.path ?: presentation.path).orEmpty().substringAfterLast('/').substringAfterLast('\\'),
                     Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.labelLarge)
+                    fontSize = 14.sp, lineHeight = 21.sp, color = rowColor,
+                    textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline)
                 diff?.takeIf { !it.usedFallback && !it.previewOmitted }?.let {
                     FileDiffStats(it)
                 }
             }
-            Icon(Icons.Default.ExpandMore, null, Modifier.size(16.dp).rotate(rotation))
+            Icon(Icons.Default.ChevronRight, null, Modifier.size(14.dp).rotate(rotation), tint = rowColor)
         }
         AnimatedVisibility(expanded, enter = expandVertically(tween(240)) + fadeIn(tween(180)),
             exit = shrinkVertically(tween(240)) + fadeOut(tween(180))) {
+            detailState.SaveableStateProvider(call.id) {
             Column(Modifier.inertWhen(!expanded), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 when {
                     call.name == Tools.RUN_COMMAND -> {
                         val command = remember(call.argumentsJson) { runCatching {
                             Json.parseToJsonElement(call.argumentsJson).jsonObject["command"]?.jsonPrimitive?.content
                         }.getOrNull() }
-                        if (call.argumentsJson.isEmpty()) Text("原始命令未保存在此记录中。", style = MaterialTheme.typography.bodySmall)
-                        else InlineCodePanel(if (command == null) "参数（无法解析命令）" else "命令", command ?: call.argumentsJson)
-                        if (result == null) Text("等待此调用返回输出", style = MaterialTheme.typography.bodySmall)
-                        else {
-                            val record = remember(result.content) { commandRecord(result.content) }
-                            record.exitCode?.let { Text("退出码 $it", style = MaterialTheme.typography.labelSmall) }
-                            InlineCodePanel(if (result.isError) "错误 / 输出" else "输出", record.output)
-                        }
+                        val record = if (result == null) null else remember(result.content) { commandRecord(result.content) }
+                        ToolRecordPanel(
+                            command = command,
+                            rawCommandFallback = call.argumentsJson.takeIf { it.isNotBlank() },
+                            output = record?.output,
+                            exitCode = record?.exitCode,
+                            running = running,
+                            awaitingApproval = awaitingApproval,
+                            queued = queued,
+                            cancelled = result?.isError == true && commandCaption(result, running, queued, awaitingApproval) == "命令已中止",
+                            failed = result?.isError == true
+                        )
                     }
                     isWrite && completed -> {
                         if (change != null) InlineFileDiff(change, diff)
                         else Text("无法显示此次 Diff：没有保存修改快照。", style = MaterialTheme.typography.bodySmall)
+                        var showRaw by rememberSaveable(call.id) { mutableStateOf(false) }
+                        UiTextButton(onClick = { showRaw = !showRaw }) {
+                            Text(if (showRaw) "收起入参与回参" else "查看入参与回参")
+                        }
+                        if (showRaw) GenericToolRecord(call, result, running, queued, awaitingApproval)
                     }
                     else -> {
-                        if (call.argumentsJson.isEmpty()) Text("原始参数未保存在此记录中。", style = MaterialTheme.typography.bodySmall)
-                        else InlineCodePanel("参数 · ${call.name}", call.argumentsJson)
-                        if (result == null) Text("等待此调用返回结果")
-                        else InlineCodePanel("原始结果", result.content, "本次工具返回空内容")
+                        GenericToolRecord(call, result, running, queued, awaitingApproval)
                     }
                 }
                 if (child != null) UiTextButton(onClick = { onOpenChild(child.id) }) {
                     Text("查看子代理 · ${childStatus(child.executionStatus)}")
                 }
                 if (allowFileNavigation && (isWrite || call.name == Tools.READ_FILE)) {
-                    extractFilePath(call.argumentsJson)?.let { path ->
+                    (result?.fileChange?.path ?: extractFilePath(call.argumentsJson))?.let { path ->
                         UiTextButton(onClick = { onViewFile(path) }) { Text("查看当前文件") }
                     }
                 }
             }
+            }
         }
     }
+}
+
+@Composable
+private fun GenericToolRecord(call: ToolCallInfo, result: ChatMessage?, running: Boolean, queued: Boolean, awaitingApproval: Boolean) {
+    ToolRecordPanel(command = null, rawCommandFallback = call.argumentsJson, output = result?.content,
+        exitCode = null, running = running, awaitingApproval = awaitingApproval, queued = queued,
+        cancelled = result?.isError == true && result.content in setOf("未执行：任务已中断", "执行已中断，结果需确认"),
+        failed = result?.isError == true, isShell = false, toolName = call.name)
 }
 
 internal fun childStatus(status: String?): String = when (status) {
@@ -178,10 +207,11 @@ internal fun SessionDrawer(
     onOpenPlan: () -> Unit = {},
     onOpen: (String) -> Unit
 ) {
-    ModalDrawerSheet(Modifier.fillMaxWidth(0.9f).fillMaxHeight()) {
-        Text("会话面板", Modifier.padding(20.dp), style = MaterialTheme.typography.headlineSmall)
+    ModalDrawerSheet(Modifier.fillMaxWidth(0.9f).fillMaxHeight(), drawerContainerColor = MaterialTheme.colorScheme.background) {
+        Text("会话面板", Modifier.padding(22.dp), style = MaterialTheme.typography.titleLarge)
         HorizontalDivider()
-        Card(onClick = onOpenPlan, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
+        Card(onClick = onOpenPlan, modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 14.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Icon(Icons.Default.AccountTree, contentDescription = null, Modifier.size(20.dp))
@@ -198,17 +228,18 @@ internal fun SessionDrawer(
                 Icon(Icons.Default.ChevronRight, contentDescription = "打开计划", Modifier.size(18.dp))
             }
         }
-        Text("子代理 · ${children.size}", Modifier.padding(20.dp), style = MaterialTheme.typography.titleMedium)
-        if (children.isEmpty()) Text("主代理委派任务后，子代理将在此显示。", Modifier.padding(horizontal = 20.dp),
+        Text("子代理 · ${children.size}", Modifier.padding(22.dp), style = MaterialTheme.typography.titleSmall)
+        if (children.isEmpty()) Text("主代理委派任务后，子代理将在此显示。", Modifier.padding(horizontal = 22.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant)
-        LazyColumn(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        LazyColumn(contentPadding = PaddingValues(horizontal = 22.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             for ((label, group) in listOf("运行中" to children.filter { it.executionStatus == "running" },
                 "已结束" to children.filter { it.executionStatus != "running" })) {
                 if (group.isNotEmpty()) {
                     item { Text(label, Modifier.padding(8.dp), style = MaterialTheme.typography.labelMedium) }
                     items(group, key = { it.id }) { child ->
-                        Card(onClick = { onOpen(child.id) }, modifier = Modifier.fillMaxWidth()) {
+                        Card(onClick = { onOpen(child.id) }, modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(child.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 Text("${childStatus(child.executionStatus)} · ${child.modelOverride.orEmpty()}",

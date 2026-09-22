@@ -1,5 +1,7 @@
 package com.example.myapplication.ui.chat
 
+import com.example.myapplication.ui.components.PrototypeTextField
+
 import com.example.myapplication.ui.components.UiTextButton
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -56,7 +58,7 @@ internal fun EditMessageDialog(message: ChatMessage, onDismiss: () -> Unit,
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("保存会改变后续请求的历史内容及缓存。不会重新执行工具，也不会自动发送。",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(text, { text = it }, modifier = Modifier.fillMaxWidth(), minLines = 4, maxLines = 10,
+            PrototypeTextField(text, { text = it }, modifier = Modifier.fillMaxWidth(), minLines = 4, maxLines = 10,
                 label = { Text("消息正文") })
             message.attachments.forEach { attachment ->
                 Row(verticalAlignment = Alignment.CenterVertically) {

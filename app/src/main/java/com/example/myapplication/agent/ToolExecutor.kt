@@ -69,7 +69,7 @@ class ToolExecutor(
             when (name) {
                 Tools.WRITE_FILE -> writeFile(arg("path"), arg("content"))
                 Tools.EDIT_FILE -> editFile(arg("path"), arg("old_text"), arg("new_text"))
-                Tools.DELETE_FILE -> FileDeletion(permissionSession, store.workspaceFile(".")).delete(arg("path"))
+                Tools.DELETE_FILE -> FileDeletion(permissionSession).delete(arg("path"))
                 Tools.READ_FILE -> readFile(arg("path"))
                 Tools.LIST_FILES -> listFiles(arg("path"))
                 Tools.RUN_COMMAND -> runCommand(arg("command"), arg("cwd"))
@@ -120,7 +120,7 @@ class ToolExecutor(
         } catch (e: Exception) {
             if (name in setOf(Tools.READ_FILE, Tools.WRITE_FILE, Tools.EDIT_FILE, Tools.DELETE_FILE, Tools.LIST_FILES)) {
                 val raw = File(arg("path"))
-                val path = if (raw.isAbsolute) raw.path else File(store.workspaceFile("."), arg("path")).path
+                val path = runCatching { permissionSession.files.lexical(arg("path")).path }.getOrDefault(raw.path)
                 RuntimeDiagnostics.fileFailure(name, path, e)
             }
             "错误: ${e.message ?: e.javaClass.simpleName}" + if (RuntimeDiagnostics.permissionFailure(e)) {
@@ -146,7 +146,10 @@ class ToolExecutor(
         FileSnapshot(target.exists(), null, previewOmitted = true)
     }
     private fun emitChange(target: File, before: FileSnapshot, after: String) {
-        val change = FileChanges.change(permissionSession.files.displayPath(target), before, after)
+        // Keep the saved file reference stable when this session later changes its directory.
+        val path = if (permissionSession.conversation.workingDirectory != null) target.canonicalPath
+            else permissionSession.files.displayPath(target)
+        val change = FileChanges.change(path, before, after)
         try { onFileChange(change) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
     }
     private fun writeFile(path: String, content: String): String {
@@ -204,7 +207,7 @@ class ToolExecutor(
         return target.readText()
     }
     private suspend fun listFiles(path: String): String {
-        val base = if (path.isBlank()) permissionSession.files.resolve(store.workspaceFile(".").path) else permissionSession.files.resolve(path)
+        val base = if (path.isBlank()) permissionSession.workingDirectory() else permissionSession.files.resolve(path)
         if (!base.exists()) return "(目录为空)"
         val files = mutableListOf<String>()
         if (base.isFile) {
@@ -243,8 +246,7 @@ class ToolExecutor(
     }
     private suspend fun runCommand(command: String, cwd: String): String {
         require(command.isNotBlank()) { "command 不能为空" }
-        val directory = if (cwd.isBlank()) store.workspaceFile(".") else permissionSession.files.resolve(cwd)
-        require(directory.exists() && directory.isDirectory) { "工作目录不存在: ${directory.path}" }
+        val directory = permissionSession.commandDirectory(cwd)
         permissionSession.authorizeCommand(command, directory.path)?.let { return "错误: $it" }
         return commandExecutor(command, directory.path)
     }

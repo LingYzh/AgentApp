@@ -12,9 +12,6 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
@@ -189,15 +186,14 @@ class OpenAiStreamParser {
     private var finishReason: String? = null
 
     fun parse(data: String): List<StreamEvent> {
-        val root = runCatching { ProviderJson.parseToJsonElement(data).jsonObject }
+        val root = runCatching { ProviderJson.parseToJsonElement(data) as? JsonObject }
             .getOrNull() ?: return emptyList()
         val events = mutableListOf<StreamEvent>()
-        root["usage"]?.jsonObject?.let(::usageEvent)?.let { events += it }
-        val choice = root["choices"]?.jsonArray?.firstOrNull()?.jsonObject ?: return events
-        choice["finish_reason"]?.let {
-            if (it is JsonPrimitive && it.isString) finishReason = it.content
-        }
-        val delta = choice["delta"]?.jsonObject ?: return events
+        (root["usage"] as? JsonObject)?.let(::usageEvent)?.let { events += it }
+        val choice = (root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return events
+        (choice["finish_reason"] as? JsonPrimitive)?.takeIf { it.isString }
+            ?.let { finishReason = it.content }
+        val delta = choice["delta"] as? JsonObject ?: return events
         delta["content"]?.let { c ->
             if (c is JsonPrimitive && c.isString && c.content.isNotEmpty()) {
                 events += StreamEvent.Text(c.content)
@@ -208,14 +204,14 @@ class OpenAiStreamParser {
                 events += StreamEvent.Thinking(c.content)
             }
         }
-        delta["tool_calls"]?.jsonArray?.forEach { tcEl ->
-            val tc = tcEl.jsonObject
-            val index = tc["index"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+        (delta["tool_calls"] as? JsonArray)?.forEach { tcEl ->
+            val tc = tcEl as? JsonObject ?: return@forEach
+            val index = (tc["index"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
             val acc = accs.getOrPut(index) { ToolCallAcc() }
-            tc["id"]?.jsonPrimitive?.contentOrNullSafe()?.let { acc.id = it }
-            tc["function"]?.jsonObject?.let { fn ->
-                fn["name"]?.jsonPrimitive?.contentOrNullSafe()?.let { acc.name.append(it) }
-                fn["arguments"]?.jsonPrimitive?.contentOrNullSafe()?.let { acc.args.append(it) }
+            (tc["id"] as? JsonPrimitive)?.contentOrNullSafe()?.let { acc.id = it }
+            (tc["function"] as? JsonObject)?.let { fn ->
+                (fn["name"] as? JsonPrimitive)?.contentOrNullSafe()?.let { acc.name.append(it) }
+                (fn["arguments"] as? JsonPrimitive)?.contentOrNullSafe()?.let { acc.args.append(it) }
             }
         }
         return events
@@ -225,9 +221,9 @@ class OpenAiStreamParser {
         TokenUsage(
             inputTokens = usage.longValue("prompt_tokens"),
             outputTokens = usage.longValue("completion_tokens"),
-            cacheReadTokens = usage["prompt_tokens_details"]?.jsonObject?.longValue("cached_tokens"),
-            cacheWriteTokens = usage["prompt_tokens_details"]?.jsonObject?.longValue("cache_creation_tokens"),
-            reasoningTokens = usage["completion_tokens_details"]?.jsonObject?.longValue("reasoning_tokens")
+            cacheReadTokens = (usage["prompt_tokens_details"] as? JsonObject)?.longValue("cached_tokens"),
+            cacheWriteTokens = (usage["prompt_tokens_details"] as? JsonObject)?.longValue("cache_creation_tokens"),
+            reasoningTokens = (usage["completion_tokens_details"] as? JsonObject)?.longValue("reasoning_tokens")
         )
     )
 

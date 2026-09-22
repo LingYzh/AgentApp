@@ -3,6 +3,7 @@ package com.example.myapplication.agent
 import com.example.myapplication.data.model.ChatMessage
 import com.example.myapplication.data.model.Conversation
 import com.example.myapplication.data.model.ProviderConfig
+import com.example.myapplication.data.model.sessionEffort
 import com.example.myapplication.data.store.FileStore
 import com.example.myapplication.provider.ProviderFactory
 import kotlinx.coroutines.CancellationException
@@ -34,7 +35,7 @@ class SubagentRunner(
         permissionSession: PermissionSession? = null
     ): String {
         val appConfig = store.loadConfig()
-        val resolved: ProviderConfig = when {
+        val resolvedBase: ProviderConfig = when {
             // 1. 用户在设置中强制指定
             appConfig.subagentProviderId != null -> {
                 val p = appConfig.providers.firstOrNull { it.id == appConfig.subagentProviderId }
@@ -53,6 +54,7 @@ class SubagentRunner(
             // 3. 兜底：继承主代理
             else -> inherited
         }
+        val resolved = resolvedBase.copy(reasoningEffort = resolvedBase.sessionEffort(inherited.reasoningEffort))
 
         onStatus("子代理运行中（${resolved.model}）…")
         // Persist the running record before the first provider call. The root conversation
@@ -64,8 +66,10 @@ class SubagentRunner(
             parentConversationId = parentConversationId,
             parentToolCallId = parentToolCallId,
             executionStatus = "running",
+            reasoningEffortOverride = resolved.reasoningEffort,
             permissionMode = permissionSession?.conversation?.permissionMode ?: com.example.myapplication.data.model.PermissionMode.ACCEPT_EDIT,
-            allowedDirectories = permissionSession?.conversation?.allowedDirectories ?: emptyList()
+            allowedDirectories = permissionSession?.conversation?.allowedDirectories ?: emptyList(),
+            workingDirectory = permissionSession?.conversation?.workingDirectory
         )
         conversation.messages += ChatMessage(role = "user", content = task)
 

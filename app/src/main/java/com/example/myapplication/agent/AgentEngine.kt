@@ -456,7 +456,7 @@ class AgentEngine(
     /** Stable prefix only. Dynamic profiles and catalogs are append-only environment context. */
     private fun buildBaseSystemPrompt(): String = buildString {
         appendLine("你是一个运行在用户 Android 手机上的 AI Agent。你可以调用工具来完成任务：")
-        appendLine("- 工作区文件：生成的文件保存在工作区，用户可在应用的文件页查看。")
+        appendLine("- 文件工具：相对路径以每次请求末尾运行环境中的当前工作目录为准；已保存附件仍使用其工作区引用。")
         appendLine("- 长期记忆：重要信息（用户偏好、项目状态、关键结论）主动用 save_memory 保存；不确定时用 search_memory 检索。")
         appendLine("- 权限、目录范围和工具可用性以每次请求末尾的运行环境为准。工具的实际执行会再次进行硬性校验；越权拒绝不是系统故障，不要重复调用。")
         appendLine()
@@ -478,13 +478,15 @@ class AgentEngine(
         appendLine("运行时允许的工具：${allowed.joinToString(", ").ifBlank { "无" }}")
         appendLine("运行时拒绝的工具：${blocked.joinToString(", ").ifBlank { "无" }}")
         blocked.forEach { name -> appendLine("- $name：${session.toolBlockReason(name)}") }
-        appendLine("记忆与 Skill 专用工具使用独立的应用托管目录，不受任务文件目录范围限制；仍遵守当前模式的写入限制和 Agent 工具配置。通用文件和命令工具不会因此获得额外目录权限。")
+        appendLine("记忆与 Skill 专用工具使用独立的应用托管目录，不受文件工具目录范围限制；仍遵守当前模式的写入限制和 Agent 工具配置。普通文件工具只可使用当前工作目录与额外目录的并集；shell 命令按其独立的模式、审批和 Android 权限规则执行。")
         appendLine("规范工具清单保持稳定；运行时限制由执行层硬性执行。")
         appendLine("规范工作区：${store.workspaceFile(".").canonicalPath}")
+        appendLine("当前工作目录：${session.workingDirectoryDescription()}（相对文件路径和未指定 cwd 的 shell 命令均从此处开始）")
         appendLine("共享存储基准路径：/storage/emulated/0（通常也可写作 /sdcard；实际 Android 访问仍受系统与用户授权限制）")
         appendLine(com.example.myapplication.diagnostics.RuntimeDiagnostics.storageAccessSummary())
         appendLine("EACCES/EPERM 是操作系统访问拒绝，不代表存在文件名保护规则；请确认系统授权和文件来源，不要反复改模式或改名试探。")
-        appendLine("已授权目录范围：${session.scopeDescription()}")
+        appendLine("文件工具有效范围（工作目录与额外目录并集）：${session.scopeDescription()}")
+        appendLine("shell 命令不受文件工具目录范围约束；仍受权限模式、用户审批和 Android 系统权限约束，且不提供目录沙箱。")
         appendLine("计划文件：${session.planPath}（${session.planFile().canonicalPath}）")
         appendLine("当前 Agent 系统配置：${agentProfile?.systemPrompt?.takeIf { it.isNotBlank() } ?: "默认 Agent"}")
         if (Tools.USE_SKILL in orderedTools) {
