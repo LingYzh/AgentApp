@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/app/src/main/assets/markdown/katex.min.css">
+<style>body{font:16px/1.8 sans-serif;padding:20px;background:#252522;color:#eee}svg{max-width:100%;height:auto}</style>
+<h1>离线公式与图表验收</h1>
+<div id="formula"></div>
+<div id="diagram"></div>
+<script src="/app/src/main/assets/markdown/katex.min.js"></script>
+<script src="/app/src/main/assets/markdown/mermaid.min.js"></script>
+<script>
+    katex.render(String.raw`\int_0^1 x^2\,dx=\frac{1}{3}`, document.getElementById('formula'), {displayMode:true,trust:false});
+    mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'dark'});
+    mermaid.render('test-diagram','flowchart LR\nA[Markdown] --> B[离线渲染]\nB --> C[验收]').then(result => {
+        document.getElementById('diagram').innerHTML=result.svg;
+        document.title='Offline render OK';
+    });
+</script>
+</html>

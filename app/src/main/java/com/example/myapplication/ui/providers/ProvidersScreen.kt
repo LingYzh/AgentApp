@@ -3,6 +3,17 @@ package com.example.myapplication.ui.providers
 import com.example.myapplication.ui.components.UiScaffold
 import com.example.myapplication.ui.components.PrototypeTextField
 import androidx.compose.foundation.layout.Arrangement
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -12,16 +23,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Button
@@ -36,12 +48,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import com.example.myapplication.ui.components.UiTextButton
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Scaffold
@@ -49,20 +58,26 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.rememberCoroutineScope
 import com.example.myapplication.ui.components.rememberListSelection
 import com.example.myapplication.ui.components.ListSelectionBar
 import com.example.myapplication.ui.components.ListPageHeader
+import com.example.myapplication.ui.components.ListOperationsMenu
+import com.example.myapplication.ui.components.inertWhen
 import kotlinx.coroutines.CancellationException
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -96,6 +111,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 
 class ProvidersViewModel(val app: AgentApp) : ViewModel() {
     private val _deleting = MutableStateFlow(false)
@@ -136,13 +152,13 @@ class ProvidersViewModel(val app: AgentApp) : ViewModel() {
         }
     }
 
-    fun saveProvider(provider: ProviderConfig) {
-        viewModelScope.launch(Dispatchers.IO) {
+    suspend fun saveProvider(provider: ProviderConfig) {
+        withContext(Dispatchers.IO) {
             val c = app.store.loadConfig()
             val list = c.providers.filterNot { it.id == provider.id } + provider
-            val selected = c.selectedProviderId ?: provider.id
+            val selected = c.selectedProviderId
             app.store.saveConfig(c.copy(providers = list, selectedProviderId = selected))
-            refresh()
+            _config.value = c.copy(providers = list, selectedProviderId = selected)
         }
     }
 
@@ -152,14 +168,6 @@ class ProvidersViewModel(val app: AgentApp) : ViewModel() {
             val list = c.providers.filterNot { it.id == id }
             val selected = if (c.selectedProviderId == id) list.firstOrNull()?.id else c.selectedProviderId
             app.store.saveConfig(c.copy(providers = list, selectedProviderId = selected))
-            refresh()
-        }
-    }
-
-    fun select(id: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val c = app.store.loadConfig()
-            app.store.saveConfig(c.copy(selectedProviderId = id))
             refresh()
         }
     }
@@ -268,10 +276,10 @@ fun ProvidersScreen(navController: NavHostController, openDrawer: () -> Unit) {
             config = config,
             onOpenDrawer = openDrawer,
             onAddProvider = { navController.safeNavigateDirect(Routes.providerEdit("new")) },
-            onSelectProvider = { id -> vm.select(id) },
             onEditProvider = { id -> navController.safeNavigateDirect(Routes.providerEdit(id)) },
             onDeleteProvider = { id -> vm.deleteProvider(id) },
             onImport = actions.onImport,
+            onExportAll = actions.onExportAll,
             onExportSelected = actions.onExportSelected,
             onDeleteSelected = vm::deleteSelected,
             busy = actions.busy || deleting
@@ -280,7 +288,7 @@ fun ProvidersScreen(navController: NavHostController, openDrawer: () -> Unit) {
 }
 
 /**
- * 模型配置列表纯 UI 组件
+ * 模型供应商设置列表纯 UI 组件
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -288,38 +296,38 @@ fun ProvidersContent(
     config: AppConfig,
     onOpenDrawer: () -> Unit,
     onAddProvider: () -> Unit,
-    onSelectProvider: (String) -> Unit,
     onEditProvider: (String) -> Unit,
     onDeleteProvider: (String) -> Unit,
     onImport: () -> Unit = {},
+    onExportAll: () -> Unit = {},
     onExportSelected: (Set<String>) -> Unit = {},
     onDeleteSelected: (Set<String>) -> Unit = {},
     busy: Boolean = false
 ) {
     var query by rememberSaveable { mutableStateOf("") }
-    val selection = rememberListSelection(config.providers.map { it.id }, config.providers.associate { it.id to it.name.ifBlank { it.model } })
     val normalizedQuery = query.trim()
     val filteredProviders = remember(config.providers, normalizedQuery) {
         config.providers.filter { provider ->
             normalizedQuery.isBlank() || listOf(
                 provider.name,
-                provider.model,
                 provider.type.label,
                 provider.baseUrl
             ).any { it.contains(normalizedQuery, ignoreCase = true) }
         }
     }
+    val selection = rememberListSelection(config.providers.map { it.id },
+        config.providers.associate { it.id to it.name.ifBlank { it.type.label } },
+        filteredProviders.map { it.id })
 
     UiScaffold(
         topBar = {
             TopAppBar(
-                title = { Text("模型配置") },
+                title = { Text("模型供应商设置") },
                 navigationIcon = {
                     IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "菜单") }
                 },
                 actions = {
-                    UiTextButton(onClick = if (selection.active) selection.onExit else selection.onEnter,
-                        enabled = !busy) { Text(if (selection.active) "完成" else "管理") }
+                    ListOperationsMenu(selection, busy, onImport, onExportAll)
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -330,7 +338,7 @@ fun ProvidersContent(
         },
         bottomBar = {
             androidx.compose.animation.AnimatedVisibility(selection.active) {
-                ListSelectionBar(selection, busy, onDeleteSelected, onImport = onImport, onExport = onExportSelected)
+                ListSelectionBar(selection, busy, onDeleteSelected, onExport = onExportSelected)
             }
         },
     ) { padding ->
@@ -342,23 +350,23 @@ fun ProvidersContent(
                 end = ExpressiveTokens.ScreenHorizontalPadding,
                 bottom = if (selection.active) 16.dp else 24.dp
             ),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item(key = "page-header") {
                 ListPageHeader(
-                    title = "模型配置",
-                    description = "选择默认连接，或点开配置调整模型。",
+                    title = "模型供应商设置",
+                    description = "管理连接与模型列表，点开供应商调整配置。",
                     query = query,
                     onQueryChange = { query = it },
-                    searchPlaceholder = "搜索模型配置",
-                    actionLabel = if (selection.active || busy) null else "添加模型配置",
+                    searchPlaceholder = "搜索模型供应商",
+                    actionLabel = if (selection.active || busy) null else "添加供应商",
                     onAction = if (selection.active || busy) null else onAddProvider
                 )
             }
             if (filteredProviders.isEmpty()) {
                 item(key = "empty-state") {
                     Text(
-                        if (normalizedQuery.isBlank()) "还没有模型配置" else "没有匹配的模型配置",
+                        if (normalizedQuery.isBlank()) "还没有模型供应商" else "没有匹配的模型供应商",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
@@ -368,53 +376,35 @@ fun ProvidersContent(
             } else {
                 items(filteredProviders, key = { it.id }) { p ->
                     Card(
-                        shape = ExpressiveTokens.CardShape,
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface
-                        ),
+                        onClick = { if (selection.active) selection.onToggle(p.id) else onEditProvider(p.id) },
+                        enabled = !busy,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        onClick = { if (!busy) {
-                            if (selection.active) selection.onToggle(p.id) else onEditProvider(p.id)
-                        } },
                         modifier = Modifier.animateItem().fillMaxWidth()
                     ) {
                         Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            Modifier.fillMaxWidth().heightIn(min = 88.dp).padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            androidx.compose.animation.Crossfade(selection.active, label = "provider selection") { managing ->
-                            if (managing) Checkbox(
+                            if (selection.active) Checkbox(
                                 checked = p.id in selection.selectedIds,
-                                onCheckedChange = { if (selection.active) selection.onToggle(p.id) },
-                                enabled = !busy
-                            ) else RadioButton(
-                                selected = p.id == config.selectedProviderId,
-                                onClick = { if (!selection.active) onSelectProvider(p.id) },
+                                onCheckedChange = null,
                                 enabled = !busy
                             )
-                            }
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    p.name.ifBlank { p.model },
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    "${p.type.label} · ${p.model}",
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(p.name.ifBlank { p.type.label }, style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(p.type.label, style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${p.models.filter { it.isNotBlank() }.distinct().size} 个模型",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    p.baseUrl,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1
-                                )
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            if (!selection.active) {
-                                IconButton(onClick = { onDeleteProvider(p.id) }, enabled = !busy) {
-                                    Icon(Icons.Filled.Delete, "删除")
-                                }
-                            }
+                            if (!selection.active) Icon(Icons.Filled.ExpandMore, "编辑供应商",
+                                Modifier.graphicsLayer { rotationZ = -90f },
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -437,6 +427,9 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
     val fetchedCapabilities by vm.fetchedCapabilities.collectAsStateWithLifecycle()
     val fetchedScope by vm.fetchedScope.collectAsStateWithLifecycle()
     val fetchError by vm.fetchError.collectAsStateWithLifecycle()
+    val coroutineScope = rememberCoroutineScope()
+    var saving by rememberSaveable { mutableStateOf(false) }
+    var saveError by rememberSaveable { mutableStateOf<String?>(null) }
 
     val existing = remember(providerId) {
         if (providerId == "new") null
@@ -455,16 +448,30 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
         fetchError = fetchError,
         onBack = { navController.safePopBackStack() },
         onSave = { config ->
-            vm.saveProvider(config)
-            navController.safePopBackStack()
+            if (!saving) coroutineScope.launch {
+                saving = true
+                saveError = null
+                try {
+                    vm.saveProvider(config)
+                    navController.safePopBackStack()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    saveError = error.message ?: "保存失败，请重试。"
+                } finally {
+                    saving = false
+                }
+            }
         },
         onTest = { config -> vm.testConnection(config) },
-        onFetchModels = { config -> vm.fetchModels(config) }
+        onFetchModels = { config -> vm.fetchModels(config) },
+        saving = saving,
+        saveError = saveError
     )
 }
 
 /**
- * 模型配置编辑页面纯 UI 组件
+ * 模型供应商编辑页面纯 UI 组件
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -481,7 +488,9 @@ fun ProviderEditContent(
     onBack: () -> Unit,
     onSave: (ProviderConfig) -> Unit,
     onTest: (ProviderConfig) -> Unit,
-    onFetchModels: (ProviderConfig) -> Unit
+    onFetchModels: (ProviderConfig) -> Unit,
+    saving: Boolean = false,
+    saveError: String? = null
 ) {
     var name by remember { mutableStateOf(initialConfig?.name ?: "") }
     var type by remember { mutableStateOf(initialConfig?.type ?: ProviderType.OPENAI) }
@@ -506,12 +515,23 @@ fun ProviderEditContent(
     var contextWindowOverrides by remember {
         mutableStateOf(initialConfig?.contextWindowOverrides ?: emptyMap())
     }
+    var contextWindowDrafts by remember {
+        mutableStateOf<Map<String, String>>(
+            initialConfig?.contextWindowOverrides?.mapValues { it.value.toString() } ?: emptyMap()
+        )
+    }
     var typeMenuExpanded by remember { mutableStateOf(false) }
     var modelMenuExpanded by remember { mutableStateOf(false) }
     var anthropicThinkingModeMenuExpanded by remember { mutableStateOf(false) }
     var generationExpanded by rememberSaveable { mutableStateOf(false) }
-    var capabilitiesExpanded by rememberSaveable { mutableStateOf(false) }
+    var modelListExpanded by rememberSaveable { mutableStateOf(true) }
     var advancedExpanded by rememberSaveable { mutableStateOf(false) }
+    var modelSettingsModel by rememberSaveable { mutableStateOf<String?>(null) }
+    val pageState = rememberSaveableStateHolder()
+
+    BackHandler(enabled = modelSettingsModel != null || saving) {
+        if (!saving) modelSettingsModel = null
+    }
 
     val currentScope = capabilityScope(type, baseUrl, modelsUrl)
     val initialScope = initialConfig?.let { capabilityScope(it.type, it.baseUrl, it.modelsUrl) }
@@ -527,6 +547,8 @@ fun ProviderEditContent(
         currentScope == initialScope -> initialConfig?.discoveredCapabilities.orEmpty()
         else -> emptyMap()
     }
+    var manualModelName by rememberSaveable { mutableStateOf("") }
+    var addedModels by remember { mutableStateOf(emptyList<String>()) }
     val currentModelId = model.trim()
     val anthropicProtocol = if (type == ProviderType.ANTHROPIC) {
         anthropicThinkingProtocol(currentModelId, anthropicThinkingMode)
@@ -539,14 +561,15 @@ fun ProviderEditContent(
         parsedMaxOutputTokens == null || parsedMaxOutputTokens <= 0 -> "请输入大于 0 的整数。"
         else -> null
     }
-    val currentOverride = capabilityOverrides[currentModelId]
-    val currentAutoCapabilities = discoveredCapabilities[currentModelId] ?: ModelCapabilities()
-    val currentCapabilities = currentOverride ?: currentAutoCapabilities
-
-    fun updateCurrentCapabilities(transform: (ModelCapabilities) -> ModelCapabilities) {
-        if (currentModelId.isBlank()) return
-        capabilityOverrides = capabilityOverrides + (currentModelId to transform(currentCapabilities))
-    }
+    val invalidContextWindowModels = contextWindowDrafts.filterValues { value ->
+        value.isNotBlank() && value.trim().toIntOrNull()?.let { it > 0 } != true
+    }.keys
+    val activeModelContextIsInvalid = modelSettingsModel?.let { modelId ->
+        contextWindowDrafts[modelId]?.let { value ->
+            value.isNotBlank() && value.trim().toIntOrNull()?.let { it > 0 } != true
+        } == true
+    } == true
+    val visibleModelIds = (modelCandidates + addedModels).filter { it.isNotBlank() }.distinct()
 
     fun buildConfig() = ProviderConfig(
         id = initialConfig?.id ?: java.util.UUID.randomUUID().toString(),
@@ -569,7 +592,7 @@ fun ProviderEditContent(
                 if (idx > 0) line.substring(0, idx).trim() to line.substring(idx + 1).trim() else null
             }
             .toMap(),
-        models = modelCandidates,
+        models = visibleModelIds,
         discoveredCapabilities = discoveredCapabilities,
         capabilityOverrides = capabilityOverrides,
         contextWindowOverrides = contextWindowOverrides
@@ -578,19 +601,57 @@ fun ProviderEditContent(
     UiScaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (isNew) "添加模型" else "编辑模型") },
+                title = {
+                    if (modelSettingsModel == null) {
+                        Text(if (isNew) "添加模型供应商" else "编辑模型供应商")
+                    } else {
+                        Column {
+                            Text("模型设置", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                modelSettingsModel.orEmpty(),
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                    IconButton(
+                        onClick = {
+                            if (modelSettingsModel != null) modelSettingsModel = null else onBack()
+                        },
+                        enabled = !saving
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            if (modelSettingsModel == null) "返回供应商设置" else "返回模型列表"
+                        )
                     }
                 },
                 actions = {
                     UiTextButton(
                         onClick = {
-                        onSave(buildConfig())
+                            if (modelSettingsModel != null) {
+                                modelSettingsModel = null
+                            } else {
+                                onSave(buildConfig())
+                            }
                         },
-                        enabled = maxOutputTokensError == null
-                    ) { Text("保存") }
+                        enabled = !saving && if (modelSettingsModel != null) {
+                            !activeModelContextIsInvalid
+                        } else {
+                            maxOutputTokensError == null && invalidContextWindowModels.isEmpty()
+                        }
+                    ) {
+                        Text(
+                            when {
+                                modelSettingsModel != null -> "完成"
+                                saving -> "保存中…"
+                                else -> "保存"
+                            }
+                        )
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -601,6 +662,14 @@ fun ProviderEditContent(
             )
         }
     ) { padding ->
+        AnimatedContent(
+            targetState = modelSettingsModel,
+            modifier = Modifier.fillMaxSize(),
+            label = "provider model settings"
+        ) { targetModel ->
+            pageState.SaveableStateProvider(targetModel?.let { "model:$it" } ?: "provider-form") {
+                Box(Modifier.fillMaxSize().inertWhen(targetModel != modelSettingsModel || saving)) {
+                    if (targetModel == null) {
         Column(
             Modifier
                 .fillMaxSize()
@@ -610,6 +679,20 @@ fun ProviderEditContent(
                 .padding(horizontal = 22.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            saveError?.let {
+                Text(
+                    "保存失败：$it",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            if (invalidContextWindowModels.isNotEmpty()) {
+                Text(
+                    "请返回模型列表修正上下文 tokens 后再保存。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
             PrototypeTextField(
                 name, { name = it }, Modifier.fillMaxWidth(),
                 label = { Text("名称") }, singleLine = true
@@ -664,7 +747,8 @@ fun ProviderEditContent(
                 PrototypeTextField(
                     value = model,
                     onValueChange = { model = it },
-                    label = { Text("模型名（可输入或从下拉选择）") },
+                    label = { Text("测试连接模型") },
+                    supportingText = { Text("仅用于测试连接，不影响聊天、Agent 或子代理的模型选择。") },
                     singleLine = true,
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(modelMenuExpanded) },
                     modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryEditable)
@@ -722,70 +806,45 @@ fun ProviderEditContent(
             }
 
             ProviderExpandableSection(
-                title = "模型能力与上下文",
-                description = "刷新模型列表不会覆盖当前模型的手动能力与上下文设置。",
-                expanded = capabilitiesExpanded,
-                onExpandedChange = { capabilitiesExpanded = it }
+                title = "模型列表",
+                description = "点击模型可设置该模型的能力与上下文覆盖。",
+                expanded = modelListExpanded,
+                onExpandedChange = { modelListExpanded = it }
             ) {
-            if (currentModelId.isNotBlank()) {
-                PrototypeTextField(
-                    value = contextWindowOverrides[currentModelId]?.toString().orEmpty(),
-                    onValueChange = { value ->
-                        val trimmed = value.trim()
-                        val parsed = trimmed.toIntOrNull()
-                        contextWindowOverrides = when {
-                            trimmed.isBlank() -> contextWindowOverrides - currentModelId
-                            parsed != null && parsed > 0 -> contextWindowOverrides + (currentModelId to parsed)
-                            else -> contextWindowOverrides
+                if (visibleModelIds.isEmpty()) {
+                    Text(
+                        "获取模型列表，或手动添加模型。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                } else {
+                    Column(
+                        Modifier.fillMaxWidth().heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        visibleModelIds.forEach { modelId ->
+                            ProviderModelRow(
+                                modelId = modelId,
+                                override = capabilityOverrides[modelId] != null ||
+                                    contextWindowOverrides[modelId] != null,
+                                discovered = discoveredCapabilities.containsKey(modelId),
+                                onClick = { modelSettingsModel = modelId }
+                            )
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("最大上下文 tokens（可选）") },
-                    supportingText = { Text("只保存到当前模型；留空表示未知，不估算上下文窗口。") },
-                    singleLine = true
-                )
-            }
-            if (currentModelId.isNotBlank() && type != ProviderType.CUSTOM) {
-                Text("当前模型能力", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    when {
-                        currentOverride != null -> "来源：手动覆盖（仅 $currentModelId）"
-                        discoveredCapabilities.containsKey(currentModelId) -> "来源：接口自动发现"
-                        else -> "接口未提供能力信息，请手动设置"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                CapabilityToggleRow("图片", currentCapabilities.image) {
-                    updateCurrentCapabilities { it.copy(image = !it.image) }
-                }
-                CapabilityToggleRow("PDF", currentCapabilities.pdf) {
-                    updateCurrentCapabilities { it.copy(pdf = !it.pdf) }
-                }
-                CapabilityToggleRow(
-                    "音频（仅 Gemini 原生请求）", currentCapabilities.audio,
-                    enabled = type == ProviderType.GEMINI
-                ) {
-                    updateCurrentCapabilities { it.copy(audio = !it.audio) }
-                }
-                CapabilityToggleRow(
-                    "视频（仅 Gemini 原生请求）", currentCapabilities.video,
-                    enabled = type == ProviderType.GEMINI
-                ) {
-                    updateCurrentCapabilities { it.copy(video = !it.video) }
-                }
-                if (currentOverride != null) {
-                    UiTextButton(onClick = { capabilityOverrides = capabilityOverrides - currentModelId }) {
-                        Text("恢复接口自动能力")
                     }
                 }
-            } else if (currentModelId.isNotBlank()) {
-                Text(
-                    "自定义模板不支持附件读取，请改用 OpenAI 兼容、Anthropic 或 Gemini。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
+
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PrototypeTextField(manualModelName, { manualModelName = it }, Modifier.weight(1f),
+                    label = { Text("手动添加模型 ID") }, singleLine = true)
+                UiTextButton(onClick = {
+                    addedModels = (addedModels + manualModelName.trim()).distinct()
+                    manualModelName = ""
+                }, enabled = manualModelName.isNotBlank() && !saving) { Text("添加") }
             }
 
             ProviderExpandableSection(
@@ -920,6 +979,192 @@ fun ProviderEditContent(
             }
             Spacer(modifier = Modifier.height(24.dp))
         }
+                    } else {
+                        val selectedOverride = capabilityOverrides[targetModel]
+                        ProviderModelSettingsContent(
+                            modelId = targetModel,
+                            providerType = type,
+                            capabilities = selectedOverride
+                                ?: discoveredCapabilities[targetModel]
+                                ?: ModelCapabilities(),
+                            hasManualCapabilityOverride = selectedOverride != null,
+                            hasDiscoveredCapabilities = discoveredCapabilities.containsKey(targetModel),
+                            contextWindowDraft = contextWindowDrafts[targetModel]
+                                ?: contextWindowOverrides[targetModel]?.toString().orEmpty(),
+                            saveError = saveError,
+                            modifier = Modifier.fillMaxSize().padding(padding),
+                            onCapabilitiesChange = { updated ->
+                                capabilityOverrides = capabilityOverrides + (targetModel to updated)
+                            },
+                            onResetCapabilities = {
+                                capabilityOverrides = capabilityOverrides - targetModel
+                            },
+                            onContextWindowChange = { value ->
+                                contextWindowOverrides = if (value == null) {
+                                    contextWindowOverrides - targetModel
+                                } else {
+                                    contextWindowOverrides + (targetModel to value)
+                                }
+                            },
+                            onContextWindowDraftChange = { value ->
+                                contextWindowDrafts = contextWindowDrafts + (targetModel to value)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderModelRow(
+    modelId: String,
+    override: Boolean,
+    discovered: Boolean,
+    onClick: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    modelId,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    when {
+                        override -> "手动覆盖"
+                        discovered -> "接口自动发现"
+                        else -> "尚未配置覆盖"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.size(6.dp))
+            Icon(
+                Icons.Filled.ExpandMore,
+                contentDescription = "设置 $modelId",
+                modifier = Modifier.graphicsLayer { rotationZ = -90f },
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProviderModelSettingsContent(
+    modelId: String,
+    providerType: ProviderType,
+    capabilities: ModelCapabilities,
+    hasManualCapabilityOverride: Boolean,
+    hasDiscoveredCapabilities: Boolean,
+    contextWindowDraft: String,
+    saveError: String?,
+    modifier: Modifier = Modifier,
+    onCapabilitiesChange: (ModelCapabilities) -> Unit,
+    onResetCapabilities: () -> Unit,
+    onContextWindowChange: (Int?) -> Unit,
+    onContextWindowDraftChange: (String) -> Unit
+) {
+    val parsedContextWindow = contextWindowDraft.trim().toIntOrNull()
+    val contextWindowError = when {
+        contextWindowDraft.isBlank() || parsedContextWindow != null && parsedContextWindow > 0 -> null
+        else -> "请输入大于 0 的整数，留空表示未知。"
+    }
+
+    Column(
+        modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState())
+            .padding(horizontal = 22.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        saveError?.let {
+            Text(
+                "保存失败：$it",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        Text(modelId, style = MaterialTheme.typography.titleLarge)
+        Text(
+            "返回供应商页面后，使用顶部的“保存”统一写入。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        PrototypeTextField(
+            value = contextWindowDraft,
+            onValueChange = { value ->
+                onContextWindowDraftChange(value)
+                val trimmed = value.trim()
+                val parsed = trimmed.toIntOrNull()
+                when {
+                    trimmed.isBlank() -> onContextWindowChange(null)
+                    parsed != null && parsed > 0 -> onContextWindowChange(parsed)
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("最大上下文 tokens（可选）") },
+            supportingText = {
+                Text(contextWindowError ?: "留空表示未知，不估算上下文窗口。")
+            },
+            isError = contextWindowError != null,
+            singleLine = true
+        )
+        if (providerType != ProviderType.CUSTOM) {
+            Text("模型能力", style = MaterialTheme.typography.titleMedium)
+            Text(
+                when {
+                    hasManualCapabilityOverride -> "来源：手动覆盖（仅 $modelId）"
+                    hasDiscoveredCapabilities -> "来源：模型列表接口声明；未声明的能力默认关闭，可手动调整。"
+                    else -> "模型列表接口未提供可识别的输入能力声明。关闭不代表模型一定不支持，可按供应商文档手动设置。"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            CapabilityToggleRow("图片", capabilities.image) {
+                onCapabilitiesChange(capabilities.copy(image = !capabilities.image))
+            }
+            CapabilityToggleRow("PDF", capabilities.pdf) {
+                onCapabilitiesChange(capabilities.copy(pdf = !capabilities.pdf))
+            }
+            CapabilityToggleRow(
+                "音频（仅 Gemini 原生请求）",
+                capabilities.audio,
+                enabled = providerType == ProviderType.GEMINI
+            ) {
+                onCapabilitiesChange(capabilities.copy(audio = !capabilities.audio))
+            }
+            CapabilityToggleRow(
+                "视频（仅 Gemini 原生请求）",
+                capabilities.video,
+                enabled = providerType == ProviderType.GEMINI
+            ) {
+                onCapabilitiesChange(capabilities.copy(video = !capabilities.video))
+            }
+            if (hasManualCapabilityOverride) {
+                UiTextButton(onClick = onResetCapabilities) {
+                    Text("恢复接口自动能力")
+                }
+            }
+        } else {
+            Text(
+                "自定义模板不支持附件读取，请改用 OpenAI 兼容、Anthropic 或 Gemini。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -944,6 +1189,11 @@ private fun ProviderExpandableSection(
     onExpandedChange: (Boolean) -> Unit,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 0f else -90f,
+        animationSpec = tween(200),
+        label = "provider section chevron"
+    )
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -964,12 +1214,17 @@ private fun ProviderExpandableSection(
                 Icon(
                     Icons.Filled.ExpandMore,
                     contentDescription = if (expanded) "收起$title" else "展开$title",
-                    modifier = if (expanded) Modifier else Modifier.graphicsLayer { rotationZ = -90f }
+                    modifier = Modifier.graphicsLayer { rotationZ = chevronRotation }
                 )
             }
-            if (expanded) {
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(tween(240)) + fadeIn(tween(180)),
+                exit = shrinkVertically(tween(240)) + fadeOut(tween(180))
+            ) {
                 Column(
-                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
+                    Modifier.fillMaxWidth().inertWhen(!expanded)
+                        .padding(horizontal = 14.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                     content = content
                 )
@@ -1022,7 +1277,6 @@ private fun ProvidersPreviewLight() {
             config = sampleConfig,
             onOpenDrawer = {},
             onAddProvider = {},
-            onSelectProvider = {},
             onEditProvider = {},
             onDeleteProvider = {}
         )
@@ -1049,7 +1303,6 @@ private fun ProvidersPreviewDark() {
             config = sampleConfig,
             onOpenDrawer = {},
             onAddProvider = {},
-            onSelectProvider = {},
             onEditProvider = {},
             onDeleteProvider = {}
         )
@@ -1064,7 +1317,6 @@ private fun ProvidersEmptyPreview() {
             config = AppConfig(providers = emptyList()),
             onOpenDrawer = {},
             onAddProvider = {},
-            onSelectProvider = {},
             onEditProvider = {},
             onDeleteProvider = {}
         )

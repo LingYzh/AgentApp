@@ -32,6 +32,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,6 +65,10 @@ import com.example.myapplication.agent.Tools
 import com.example.myapplication.ui.components.rememberListSelection
 import com.example.myapplication.ui.components.ListSelectionBar
 import com.example.myapplication.ui.components.ListPageHeader
+import com.example.myapplication.ui.components.ListOperationsMenu
+import com.example.myapplication.ui.components.PrototypeListAction
+import com.example.myapplication.ui.components.PrototypeListOverflowMenu
+import com.example.myapplication.ui.components.PrototypeListTag
 import kotlinx.coroutines.CancellationException
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -204,10 +210,10 @@ fun AgentsScreen(navController: NavHostController, openDrawer: () -> Unit) {
                     }
 
                     agent.model != null -> {
-                        "${provider?.name?.ifBlank { provider.model } ?: ""} / ${agent.model}"
+                        "${provider?.name?.ifBlank { provider.type.label } ?: ""} / ${agent.model}"
                     }
 
-                    else -> "跟随全局选中模型"
+                    else -> "跟随新会话选择"
                 }
             },
             onOpenDrawer = openDrawer,
@@ -217,6 +223,7 @@ fun AgentsScreen(navController: NavHostController, openDrawer: () -> Unit) {
             onDeleteAgent = { id -> vm.delete(id) },
             onResetToDefaults = { vm.resetToDefaults() },
             onImport = actions.onImport,
+            onExportAll = actions.onExportAll,
             onExportSelected = actions.onExportSelected,
             onDeleteSelected = vm::deleteSelected,
             busy = actions.busy || deleting
@@ -239,13 +246,13 @@ fun AgentsContent(
     onResetToDefaults: () -> Unit,
     loading: Boolean = false,
     onImport: () -> Unit = {},
+    onExportAll: () -> Unit = {},
     onExportSelected: (Set<String>) -> Unit = {},
     onDeleteSelected: (Set<String>) -> Unit = {},
     busy: Boolean = false,
     onStartAgent: (String) -> Unit = {}
 ) {
     var query by rememberSaveable { mutableStateOf("") }
-    val selection = rememberListSelection(agents.map { it.id }, agents.associate { it.id to it.name })
     val normalizedQuery = query.trim()
     val filteredAgents = remember(agents, normalizedQuery, modelLabel) {
         agents.filter { agent ->
@@ -253,6 +260,8 @@ fun AgentsContent(
                 .any { it.contains(normalizedQuery, ignoreCase = true) }
         }
     }
+    val selection = rememberListSelection(agents.map { it.id },
+        agents.associate { it.id to it.name }, filteredAgents.map { it.id })
 
     UiScaffold(
         topBar = {
@@ -262,8 +271,7 @@ fun AgentsContent(
                     IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "菜单") }
                 },
                 actions = {
-                    UiTextButton(onClick = if (selection.active) selection.onExit else selection.onEnter,
-                        enabled = !busy) { Text(if (selection.active) "完成" else "管理") }
+                    ListOperationsMenu(selection, busy, onImport, onExportAll)
                     if (!selection.active) {
                         IconButton(onClick = onResetToDefaults, enabled = !busy) {
                             Icon(Icons.Filled.AutoAwesome, "载入默认预设")
@@ -279,7 +287,7 @@ fun AgentsContent(
         },
         bottomBar = {
             androidx.compose.animation.AnimatedVisibility(selection.active) {
-                ListSelectionBar(selection, busy, onDeleteSelected, onImport = onImport, onExport = onExportSelected)
+                ListSelectionBar(selection, busy, onDeleteSelected, onExport = onExportSelected)
             }
         },
     ) { padding ->
@@ -291,7 +299,7 @@ fun AgentsContent(
                 end = ExpressiveTokens.ScreenHorizontalPadding,
                 bottom = if (selection.active) 16.dp else 24.dp
             ),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             item(key = "page-header") {
                 ListPageHeader(
@@ -340,50 +348,106 @@ fun AgentsContent(
             } else {
                 items(filteredAgents, key = { it.id }) { agent ->
                     Card(
-                        shape = ExpressiveTokens.CardShape,
+                        shape = RoundedCornerShape(18.dp),
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.surface
                         ),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        onClick = { if (!busy) {
+                        onClick = {
                             if (selection.active) selection.onToggle(agent.id) else onSelectAgent(agent.id)
-                        } },
-                        modifier = Modifier.animateItem().fillMaxWidth()
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.animateItem().fillMaxWidth().padding(vertical = 6.dp)
                     ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (selection.active) Checkbox(
-                                checked = agent.id in selection.selectedIds,
-                                onCheckedChange = { selection.onToggle(agent.id) },
-                                enabled = !busy
-                            )
-                            AgentAvatar(
-                                emoji = agent.emoji,
-                                avatarPath = agent.avatarPath,
-                                size = 44.dp
-                            )
-                            Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                                Text(agent.name, style = MaterialTheme.typography.titleMedium)
-                                if (agent.description.isNotBlank()) {
+                        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(13.dp)
+                            ) {
+                                AgentAvatar(
+                                    emoji = agent.emoji,
+                                    avatarPath = agent.avatarPath,
+                                    size = 42.dp
+                                )
+                                Column(Modifier.weight(1f)) {
                                     Text(
-                                        agent.description,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2
+                                        agent.name,
+                                        style = MaterialTheme.typography.bodyLarge.copy(
+                                            fontSize = 15.sp,
+                                            fontWeight = androidx.compose.ui.text.font.FontWeight.W600,
+                                            lineHeight = 23.sp
+                                        ),
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                    Box(Modifier.padding(top = 8.dp)) {
+                                        PrototypeListTag(modelLabel(agent))
+                                    }
+                                }
+                                if (selection.active) {
+                                    Checkbox(
+                                        checked = agent.id in selection.selectedIds,
+                                        onCheckedChange = { selection.onToggle(agent.id) },
+                                        enabled = !busy
+                                    )
+                                } else {
+                                    PrototypeListOverflowMenu(
+                                        contentDescription = "${agent.name} 操作",
+                                        enabled = !busy,
+                                        actions = listOf(
+                                            PrototypeListAction(
+                                                "编辑 Agent",
+                                                Icons.Filled.Edit,
+                                                onClick = { onSelectAgent(agent.id) }
+                                            ),
+                                            PrototypeListAction(
+                                                "删除",
+                                                Icons.Filled.Delete,
+                                                destructive = true,
+                                                onClick = { onDeleteAgent(agent.id) }
+                                            )
+                                        )
                                     )
                                 }
+                            }
+                            if (agent.description.isNotBlank()) {
                                 Text(
-                                    modelLabel(agent),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    agent.description,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontSize = 13.sp,
+                                        lineHeight = 23.sp
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 10.dp),
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                             }
-                            if (!selection.active) {
-                                UiTextButton(onClick = { onStartAgent(agent.id) }, enabled = !busy) { Text("对话") }
-                                IconButton(onClick = { onDeleteAgent(agent.id) }, enabled = !busy) {
-                                    Icon(Icons.Filled.Delete, "删除")
+                            Column(Modifier.fillMaxWidth().padding(top = 13.dp)) {
+                                androidx.compose.material3.HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outlineVariant
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        if (agent.tools.isEmpty()) "全部工具" else "${agent.tools.size} 项工具",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    UiTextButton(onClick = { onStartAgent(agent.id) }, enabled = !busy) {
+                                        Text("开始对话")
+                                        Icon(
+                                            Icons.Filled.ChevronRight,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -467,8 +531,8 @@ fun AgentEditContent(
     }
 
     val selectedProvider = providers.firstOrNull { it.id == providerId }
-    val providerLabel = selectedProvider?.let { "${it.name.ifBlank { it.model }}（${it.type.label}）" }
-        ?: "跟随全局选中"
+    val providerLabel = selectedProvider?.let { "${it.name.ifBlank { it.type.label }}（${it.type.label}）" }
+        ?: "跟随新会话选择"
     val modelOptions = selectedProvider?.models ?: emptyList()
 
     UiScaffold(
@@ -596,15 +660,15 @@ fun AgentEditContent(
                     onDismissRequest = { providerMenuExpanded = false }
                 ) {
                     DropdownMenuItem(
-                        text = { Text("跟随全局选中") },
+                        text = { Text("跟随新会话选择") },
                         onClick = { providerId = null; model = null; providerMenuExpanded = false }
                     )
                     providers.forEach { p ->
                         DropdownMenuItem(
-                            text = { Text("${p.name.ifBlank { p.model }}（${p.type.label}）") },
+                            text = { Text("${p.name.ifBlank { p.type.label }}（${p.type.label}）") },
                             onClick = {
                                 providerId = p.id
-                                model = p.models.firstOrNull() ?: p.model.ifBlank { null }
+                                model = null
                                 providerMenuExpanded = false
                             }
                         )
@@ -618,7 +682,7 @@ fun AgentEditContent(
                     onExpandedChange = { modelMenuExpanded = it }
                 ) {
                     PrototypeTextField(
-                        value = model ?: selectedProvider.model,
+                        value = model.orEmpty(),
                         onValueChange = {},
                         readOnly = true,
                         label = { Text("默认模型") },
@@ -629,7 +693,7 @@ fun AgentEditContent(
                         expanded = modelMenuExpanded,
                         onDismissRequest = { modelMenuExpanded = false }
                     ) {
-                        (modelOptions.ifEmpty { listOf(selectedProvider.model) }).forEach { m ->
+                        modelOptions.forEach { m ->
                             DropdownMenuItem(
                                 text = { Text(m) },
                                 onClick = { model = m; modelMenuExpanded = false }

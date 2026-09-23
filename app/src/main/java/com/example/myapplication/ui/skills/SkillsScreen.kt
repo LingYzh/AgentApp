@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
@@ -51,6 +53,12 @@ import com.example.myapplication.ui.components.UiTextButton
 import com.example.myapplication.ui.components.FormSection
 import com.example.myapplication.ui.components.PrototypeTextField
 import com.example.myapplication.ui.components.ListPageHeader
+import com.example.myapplication.ui.components.ListOperationsMenu
+import com.example.myapplication.ui.components.PrototypeListAction
+import com.example.myapplication.ui.components.PrototypeListIcon
+import com.example.myapplication.ui.components.PrototypeListOverflowMenu
+import com.example.myapplication.ui.components.PrototypeListRow
+import com.example.myapplication.ui.components.PrototypeListTag
 import com.example.myapplication.ui.components.TopFeedbackHost
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -472,7 +480,6 @@ fun SkillsContent(
     busy: Boolean = false
 ) {
     var query by rememberSaveable { mutableStateOf("") }
-    val selection = rememberListSelection(skills.map { it.name })
     val normalizedQuery = query.trim()
     val filteredSkills = remember(skills, normalizedQuery) {
         skills.filter { skill ->
@@ -484,6 +491,8 @@ fun SkillsContent(
             ).any { it.contains(normalizedQuery, ignoreCase = true) }
         }
     }
+    val selection = rememberListSelection(skills.map { it.name },
+        visibleIds = filteredSkills.map { it.name })
     UiScaffold(
         topBar = {
             TopAppBar(
@@ -500,20 +509,8 @@ fun SkillsContent(
                     }
                 },
                 actions = {
-                    UiTextButton(
-                        onClick = if (selection.active) selection.onExit else selection.onEnter,
-                        enabled = !busy
-                    ) {
-                        Text(if (selection.active) "完成" else "管理")
-                    }
-                    if (!selection.active) {
-                        IconButton(onClick = onImportZip, enabled = !busy) {
-                            Icon(Icons.Filled.FileUpload, "导入 Skill (ZIP)")
-                        }
-                        IconButton(onClick = onExportAll, enabled = !busy) {
-                            Icon(Icons.Filled.FileDownload, "导出全部 (ZIP)")
-                        }
-                    }
+                    ListOperationsMenu(selection, busy, onImportZip, onExportAll,
+                        exportLabel = "导出全部 ZIP")
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -530,7 +527,6 @@ fun SkillsContent(
                     selection = selection,
                     busy = busy,
                     onDelete = onDeleteSelected,
-                    onImport = onImportZip,
                     onExport = onExportSelected
                 )
             }
@@ -544,7 +540,7 @@ fun SkillsContent(
                 end = ExpressiveTokens.ScreenHorizontalPadding,
                 bottom = if (selection.active) 16.dp else 24.dp
             ),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             item(key = "page-header") {
                 ListPageHeader(
@@ -568,151 +564,69 @@ fun SkillsContent(
                     )
                 }
             } else {
-                items(filteredSkills, key = { it.name }) { skill ->
-                    Card(
-                        shape = ExpressiveTokens.CardShape,
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface
-                        ),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                itemsIndexed(filteredSkills, key = { _, skill -> skill.name }) { index, skill ->
+                    PrototypeListRow(
+                        title = skill.name,
+                        description = skill.description.ifBlank { "暂无描述" },
+                        modifier = Modifier.animateItem(),
+                        leadingContent = if (selection.active) {
+                            {
+                                Checkbox(
+                                    checked = skill.name in selection.selectedIds,
+                                    onCheckedChange = { selection.onToggle(skill.name) },
+                                    enabled = !busy
+                                )
+                            }
+                        } else {
+                            { PrototypeListIcon(Icons.Filled.Build, "Skill", accent = true) }
+                        },
+                        metadataContent = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (skill.version.isNotBlank()) {
+                                    PrototypeListTag("v${skill.version}", accent = true)
+                                }
+                                if (skill.license.isNotBlank()) {
+                                    PrototypeListTag(skill.license)
+                                }
+                            }
+                        },
+                        trailingContent = {
+                            if (!selection.active) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    PrototypeListOverflowMenu(
+                                        contentDescription = "Skill 操作",
+                                        actions = listOf(
+                                            PrototypeListAction(
+                                                "导出 ZIP",
+                                                Icons.Filled.Share,
+                                                onClick = { onExportSkill(skill.name) }
+                                            ),
+                                            PrototypeListAction(
+                                                "删除",
+                                                Icons.Filled.Delete,
+                                                destructive = true,
+                                                onClick = { onDeleteSkill(skill.name) }
+                                            )
+                                        ),
+                                        enabled = !busy
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Filled.ChevronRight,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        },
+                        showDivider = index < filteredSkills.lastIndex,
                         onClick = {
                             if (!busy) {
                                 if (selection.active) selection.onToggle(skill.name)
                                 else onSelectSkill(skill.name)
                             }
-                        },
-                        modifier = Modifier.animateItem().fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 14.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            // 1. 标题行：独占顶部空间，工具小图标 + 等宽代码质感的技能标识
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                if (selection.active) {
-                                    Checkbox(
-                                        checked = skill.name in selection.selectedIds,
-                                        onCheckedChange = { selection.onToggle(skill.name) },
-                                        enabled = !busy
-                                    )
-                                }
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    modifier = Modifier.size(24.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Build,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                    }
-                                }
-                                Text(
-                                    text = skill.name,
-                                    style = MaterialTheme.typography.titleMedium.copy(
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.SemiBold
-                                    ),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-
-                            // 2. 描述文案（自然展开 1-2 行）
-                            Text(
-                                text = skill.description.ifBlank { "暂无描述" },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-
-                            // 3. 底部元数据与操作栏：版本号 + 许可证居左，操作按钮紧凑居右
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                // 元数据标签组
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f, fill = false)
-                                ) {
-                                    if (skill.version.isNotBlank()) {
-                                        Surface(
-                                            shape = RoundedCornerShape(4.dp),
-                                            color = MaterialTheme.colorScheme.secondaryContainer
-                                        ) {
-                                            Text(
-                                                "v${skill.version}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-                                    if (skill.license.isNotBlank()) {
-                                        Surface(
-                                            shape = RoundedCornerShape(4.dp),
-                                            color = MaterialTheme.colorScheme.surfaceVariant
-                                        ) {
-                                            Text(
-                                                skill.license,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // 操作按钮组
-                                if (!selection.active) {
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        IconButton(
-                                            onClick = { onExportSkill(skill.name) },
-                                            enabled = !busy,
-                                            modifier = Modifier.size(32.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Filled.Share,
-                                                contentDescription = "导出并分享 ZIP",
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                        IconButton(
-                                            onClick = { onDeleteSkill(skill.name) },
-                                            enabled = !busy,
-                                            modifier = Modifier.size(32.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Filled.Delete,
-                                                contentDescription = "删除",
-                                                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
                         }
-                    }
+                    )
                 }
             }
         }

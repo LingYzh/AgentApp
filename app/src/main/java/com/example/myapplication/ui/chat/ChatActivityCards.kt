@@ -162,7 +162,9 @@ internal fun ToolActivityRow(
                         UiTextButton(onClick = { showRaw = !showRaw }) {
                             Text(if (showRaw) "收起入参与回参" else "查看入参与回参")
                         }
-                        if (showRaw) GenericToolRecord(call, result, running, queued, awaitingApproval)
+                        AnimatedVisibility(showRaw) {
+                            Box(Modifier.inertWhen(!showRaw)) { GenericToolRecord(call, result, running, queued, awaitingApproval) }
+                        }
                     }
                     else -> {
                         GenericToolRecord(call, result, running, queued, awaitingApproval)
@@ -196,59 +198,4 @@ internal fun childStatus(status: String?): String = when (status) {
     "failed" -> "失败"
     "cancelled" -> "已停止"
     else -> "记录"
-}
-
-/** The plan entry stays available even before a conversation has child agents. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun SessionDrawer(
-    children: List<Conversation>,
-    planContent: String? = null,
-    onOpenPlan: () -> Unit = {},
-    onOpen: (String) -> Unit
-) {
-    ModalDrawerSheet(Modifier.fillMaxWidth(0.9f).fillMaxHeight(), drawerContainerColor = MaterialTheme.colorScheme.background) {
-        Text("会话面板", Modifier.padding(22.dp), style = MaterialTheme.typography.titleLarge)
-        HorizontalDivider()
-        Card(onClick = onOpenPlan, modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 14.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(Icons.Default.AccountTree, contentDescription = null, Modifier.size(20.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("计划", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        text = planContent?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()?.trimStart('#')?.trim() ?: "尚未创建计划",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Icon(Icons.Default.ChevronRight, contentDescription = "打开计划", Modifier.size(18.dp))
-            }
-        }
-        Text("子代理 · ${children.size}", Modifier.padding(22.dp), style = MaterialTheme.typography.titleSmall)
-        if (children.isEmpty()) Text("主代理委派任务后，子代理将在此显示。", Modifier.padding(horizontal = 22.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        LazyColumn(contentPadding = PaddingValues(horizontal = 22.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            for ((label, group) in listOf("运行中" to children.filter { it.executionStatus == "running" },
-                "已结束" to children.filter { it.executionStatus != "running" })) {
-                if (group.isNotEmpty()) {
-                    item { Text(label, Modifier.padding(8.dp), style = MaterialTheme.typography.labelMedium) }
-                    items(group, key = { it.id }) { child ->
-                        Card(onClick = { onOpen(child.id) }, modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(child.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                Text("${childStatus(child.executionStatus)} · ${child.modelOverride.orEmpty()}",
-                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 }

@@ -9,16 +9,21 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import java.io.File
 
 /**
@@ -33,13 +38,22 @@ fun AgentAvatar(
     size: Dp = 40.dp,
     shape: Shape = RoundedCornerShape(size * 0.28f)
 ) {
-    val file = remember(avatarPath) {
-        avatarPath?.let { File(it) }?.takeIf { it.exists() && it.length() > 0 }
+    val context = LocalContext.current
+    val file = avatarPath?.let { File(it) }?.takeIf { it.exists() && it.length() > 0 }
+    // The archive restore can replace an image at the same path.
+    val version = file?.let { "${it.absolutePath}:${it.lastModified()}:${it.length()}" }
+    val request = remember(context, version) {
+        file?.let {
+            val cacheKey = version ?: it.absolutePath
+            ImageRequest.Builder(context).data(it).memoryCacheKey(cacheKey).diskCacheKey(cacheKey).build()
+        }
     }
+    var loadFailed by remember(version) { mutableStateOf(false) }
 
-    if (file != null) {
+    if (request != null && !loadFailed) {
         AsyncImage(
-            model = file,
+            model = request,
+            onError = { loadFailed = true },
             contentDescription = null,
             modifier = modifier
                 .size(size)

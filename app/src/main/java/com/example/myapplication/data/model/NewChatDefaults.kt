@@ -16,11 +16,17 @@ data class NewChatDefaults(
     fun draft(config: AppConfig, agents: List<AgentProfile>, requestedAgentId: String? = null): Conversation {
         val selectedAgent = (requestedAgentId ?: agentId)?.takeIf { id -> agents.any { it.id == id } }
         // Explicitly starting an Agent uses that Agent's model; ordinary New Chat remembers the composer.
-        val selectedProvider = providerId?.takeIf { id -> requestedAgentId == null && config.providers.any { it.id == id } }
+        val agentHasModel = requestedAgentId?.let { id ->
+            agents.firstOrNull { it.id == id }?.let { it.providerId != null && !it.model.isNullOrBlank() }
+        } == true
+        val selectedProvider = providerId?.takeIf { id -> !agentHasModel && config.providers.any { it.id == id } }
+        val selectedModel = model?.takeIf { candidate -> config.providers.any {
+            it.id == selectedProvider && candidate in it.models
+        } }
         val draft = Conversation(
             id = "", agentId = selectedAgent,
             providerIdOverride = selectedProvider,
-            modelOverride = model.takeIf { selectedProvider != null },
+            modelOverride = selectedModel,
             reasoningEffortOverride = reasoningEffort,
             permissionMode = permissionMode,
             allowedDirectories = allowedDirectories.toList(),

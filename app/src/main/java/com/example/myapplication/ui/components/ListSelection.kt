@@ -28,7 +28,9 @@ import androidx.compose.ui.unit.dp
 data class ListSelection(
     val active: Boolean,
     val selectedIds: Set<String>,
+    val availableIds: Set<String>,
     val allSelected: Boolean,
+    val hasVisibleItems: Boolean,
     val onEnter: () -> Unit,
     val onExit: () -> Unit,
     val onToggle: (String) -> Unit,
@@ -38,11 +40,16 @@ data class ListSelection(
 
 /** 选择集合独立于业务默认项；刷新后只向操作回调提供仍存在的 ID。 */
 @Composable
-fun rememberListSelection(ids: List<String>, labels: Map<String, String> = emptyMap()): ListSelection {
+fun rememberListSelection(
+    ids: List<String>,
+    labels: Map<String, String> = emptyMap(),
+    visibleIds: List<String> = ids
+): ListSelection {
     var active by rememberSaveable { mutableStateOf(false) }
     var selected by rememberSaveable { mutableStateOf<List<String>>(arrayListOf()) }
     val available = ids.toSet()
-    val valid = selected.toSet().intersect(available)
+    val visible = visibleIds.toSet().intersect(available)
+    val valid = availableSelection(selected.toSet(), available)
     fun exit() {
         active = false
         selected = arrayListOf()
@@ -51,13 +58,17 @@ fun rememberListSelection(ids: List<String>, labels: Map<String, String> = empty
     return ListSelection(
         active = active,
         selectedIds = valid,
-        allSelected = available.isNotEmpty() && valid == available,
+        availableIds = available,
+        allSelected = visible.isNotEmpty() && valid.containsAll(visible),
+        hasVisibleItems = visible.isNotEmpty(),
         onEnter = { selected = arrayListOf(); active = true },
         onExit = ::exit,
         onToggle = { id ->
             if (id in available) selected = ArrayList(if (id in valid) valid - id else valid + id)
         },
-        onToggleAll = { selected = ArrayList(if (valid == available) emptySet() else available) },
+        onToggleAll = {
+            selected = ArrayList(toggleVisibleSelection(valid, available, visible))
+        },
         labelForId = { labels[it]?.ifBlank { it } ?: it }
     )
 }
@@ -68,23 +79,21 @@ fun ListSelectionBar(
     selection: ListSelection,
     busy: Boolean = false,
     onDelete: (Set<String>) -> Unit,
-    onImport: (() -> Unit)? = null,
     onExport: ((Set<String>) -> Unit)? = null,
     deleteNotice: String? = null
 ) {
     var deleteIds by rememberSaveable { mutableStateOf<List<String>>(arrayListOf()) }
     var deleteNames by rememberSaveable { mutableStateOf<List<String>>(arrayListOf()) }
-    Surface(tonalElevation = 3.dp) {
+    Surface(modifier = Modifier.inertWhen(!selection.active), tonalElevation = 3.dp) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("已选 ${selection.selectedIds.size} 项")
-                UiTextButton(onClick = selection.onToggleAll, enabled = !busy) {
+                UiTextButton(onClick = selection.onToggleAll, enabled = !busy && selection.hasVisibleItems) {
                     Text(if (selection.allSelected) "取消全选" else "全选")
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                onImport?.let { UiTextButton(onClick = it, enabled = !busy) { Text("导入") } }
                 onExport?.let { action ->
                     UiTextButton(onClick = { action(selection.selectedIds) },
                         enabled = !busy && selection.selectedIds.isNotEmpty()) { Text("导出已选") }
@@ -93,13 +102,15 @@ fun ListSelectionBar(
                     deleteIds = ArrayList(selection.selectedIds)
                     deleteNames = ArrayList(selection.selectedIds.map(selection.labelForId))
                 },
-                    enabled = !busy && selection.selectedIds.isNotEmpty()) { Text("删除已选") }
+                    enabled = !busy && selection.selectedIds.isNotEmpty()) {
+                    Text("删除已选", color = MaterialTheme.colorScheme.error)
+                }
             }
         }
     }
     if (deleteIds.isNotEmpty()) {
         AlertDialog(
-            onDismissRequest = { deleteIds = arrayListOf() },
+            onDismissRequest = { if (!busy) deleteIds = arrayListOf() },
             title = { Text("删除所选项目？") },
             text = {
                 Column {
@@ -113,10 +124,11 @@ fun ListSelectionBar(
             dismissButton = { UiTextButton(onClick = { deleteIds = arrayListOf() }) { Text("取消") } },
             confirmButton = {
                 UiTextButton(enabled = !busy, onClick = {
-                    val snapshot = deleteIds.toSet().intersect(selection.selectedIds)
+                    val snapshot = confirmedSelection(deleteIds.toSet(), selection.selectedIds,
+                        selection.availableIds)
                     deleteIds = arrayListOf()
                     if (snapshot.isNotEmpty()) onDelete(snapshot)
-                }) { Text("删除") }
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             }
         )
     }

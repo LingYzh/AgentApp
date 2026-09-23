@@ -9,16 +9,24 @@ import org.junit.rules.TemporaryFolder
 
 class NewChatDefaultsTest {
     @get:Rule val temp = TemporaryFolder()
-    private val provider = ProviderConfig(id = "p", model = "gateway", reasoningEffort = ReasoningEffort.MAX)
+    private val provider = ProviderConfig(id = "p", model = "gateway", models = listOf("selected", "composer-model"), reasoningEffort = ReasoningEffort.MAX)
     private val config = AppConfig(providers = listOf(provider))
 
     @Test fun firstDraftUsesMediumInsteadOfLegacyProviderDefault() {
         val draft = NewChatDefaults().draft(config, emptyList())
+        assertNull(ModelResolver.resolve(draft, config, emptyList()))
         assertEquals(ReasoningEffort.MEDIUM, draft.reasoningEffortOverride)
-        assertEquals(ReasoningEffort.MEDIUM, ModelResolver.resolve(Conversation(), config, emptyList())!!.reasoningEffort)
+        assertEquals(ReasoningEffort.MEDIUM, ModelResolver.resolve(Conversation(providerIdOverride = provider.id, modelOverride = "selected"), config, emptyList())!!.reasoningEffort)
         assertEquals(ReasoningEffort.NONE, ModelResolver.resolve(
-            Conversation(reasoningEffortOverride = ReasoningEffort.NONE), config, emptyList()
+            Conversation(providerIdOverride = provider.id, modelOverride = "selected", reasoningEffortOverride = ReasoningEffort.NONE), config, emptyList()
         )!!.reasoningEffort)
+    }
+
+    @Test fun removedRememberedModelDoesNotUseTestModelOrFirstCatalogEntry() {
+        val defaults = NewChatDefaults(providerId = provider.id, model = "removed")
+        val draft = defaults.draft(config, emptyList())
+        assertNull(draft.modelOverride)
+        assertNull(ModelResolver.resolve(draft, config, emptyList()))
     }
 
     @Test fun unsentSettingsAreAvailableImmediatelyAndSurviveRestartWithoutDraftContent() {
@@ -62,13 +70,14 @@ class NewChatDefaultsTest {
         assertNull(draft.agentId)
         assertNull(draft.providerIdOverride)
         assertNull(draft.modelOverride)
-        assertNull(draft.reasoningEffortOverride)
+        assertEquals(ReasoningEffort.HIGH, draft.reasoningEffortOverride)
         assertEquals(ReasoningEffort.HIGH, NewChatDefaults.fromDraft(draft, prior).reasoningEffort)
     }
 
     @Test fun modelWithoutMediumUsesAnAvailableLevel() {
         val image = ProviderConfig(type = ProviderType.GEMINI, model = "gemini-3.1-flash-lite-image")
-        val draft = NewChatDefaults().draft(AppConfig(providers = listOf(image)), emptyList())
+        val draft = NewChatDefaults(providerId = image.id, model = image.model).draft(
+            AppConfig(providers = listOf(image.copy(models = listOf(image.model)))), emptyList())
         assertEquals(ReasoningEffort.HIGH, draft.reasoningEffortOverride)
     }
 

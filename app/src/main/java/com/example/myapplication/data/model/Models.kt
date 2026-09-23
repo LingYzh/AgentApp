@@ -22,6 +22,7 @@ data class ProviderConfig(
     val type: ProviderType = ProviderType.OPENAI,
     val baseUrl: String = "",
     val apiKey: String = "",
+    /** Stored value is only the connection-test model; runtime copies carry an explicit session model. */
     val model: String = "",
     val temperature: Float? = null,
     /** Optional completion cap. Null leaves optional protocol fields unset. */
@@ -38,7 +39,7 @@ data class ProviderConfig(
     val customStreamPath: String = "",
     /** 附加请求头 */
     val extraHeaders: Map<String, String> = emptyMap(),
-    /** 缓存的可用模型列表（通过 /models 接口拉取） */
+    /** 可用模型列表（通过 /models 获取或手动添加，与测试模型无关）。 */
     val models: List<String> = emptyList(),
     /** 可选的完整模型列表地址；留空按供应商和协议推导。 */
     val modelsUrl: String = "",
@@ -397,7 +398,7 @@ data class SkillMeta(
 
 /**
  * 解析一次对话实际使用的 ProviderConfig（含模型 override）。
- * 优先级：会话 override > 会话绑定 AgentProfile 默认 > 全局选中。
+ * 优先级：会话明确选择 > 会话绑定 AgentProfile。供应商的 model 仅供测试连接。
  */
 object ModelResolver {
     fun resolve(
@@ -406,15 +407,13 @@ object ModelResolver {
         agents: List<AgentProfile>
     ): ProviderConfig? {
         val profile = conversation.agentId?.let { id -> agents.firstOrNull { it.id == id } }
-        val provider = conversation.providerIdOverride?.let { id ->
-            appConfig.providers.firstOrNull { it.id == id }
-        } ?: profile?.providerId?.let { id ->
-            appConfig.providers.firstOrNull { it.id == id }
-        } ?: appConfig.selectedProvider
-        val model = conversation.modelOverride
-            ?: profile?.model?.takeIf { it.isNotBlank() }
-            ?: provider?.model
-        val resolved = provider?.copy(model = model ?: provider.model) ?: return null
+        // Resolve provider/model as a pair: a missing provider must not redirect a
+        // selected model to another endpoint, and the test model is never a fallback.
+        val explicitProvider = conversation.providerIdOverride
+        val providerId = explicitProvider ?: profile?.providerId ?: return null
+        val provider = appConfig.providers.firstOrNull { it.id == providerId } ?: return null
+        val model = if (explicitProvider != null) conversation.modelOverride else profile?.model
+        val resolved = provider.copy(model = model?.takeIf { it.isNotBlank() } ?: return null)
         return resolved.copy(reasoningEffort = resolved.sessionEffort(conversation.reasoningEffortOverride))
     }
 }

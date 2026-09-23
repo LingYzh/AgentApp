@@ -489,7 +489,7 @@ private fun exportFileName(kind: TransferKind): String {
 }
 
 private fun transferLabel(kind: TransferKind): String = when (kind) {
-    TransferKind.PROVIDERS -> "模型配置"
+    TransferKind.PROVIDERS -> "模型供应商设置"
     TransferKind.AGENTS -> "Agent"
     TransferKind.CONVERSATIONS -> "会话"
     TransferKind.MEMORIES -> "记忆"

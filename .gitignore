@@ -14,3 +14,9 @@
 .cxx
 local.properties
 **/build/
+**/node_modules/
+/.Codex/local/
+/.kotlin/
+**/__pycache__/
+/.Codex/verification/**/*.log
+/.Codex/verification/**/*.xml

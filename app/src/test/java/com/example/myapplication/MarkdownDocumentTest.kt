@@ -4,6 +4,7 @@ import com.example.myapplication.ui.components.MarkdownBlock
 import com.example.myapplication.ui.components.MarkdownDocument
 import com.example.myapplication.ui.components.SyntaxHighlighter
 import com.example.myapplication.ui.components.SyntaxKind
+import com.example.myapplication.ui.components.remoteMarkdownImageUrl
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -98,6 +99,146 @@ class MarkdownDocumentTest {
         val parsed = MarkdownDocument.parse("<script>alert(1)</script>\n\n<span onclick=\"bad()\">text</span>")
         assertTrue(parsed.all { it is MarkdownBlock.Paragraph })
         assertTrue((parsed[0] as MarkdownBlock.Paragraph).runs.joinToString("") { it.text }.contains("<script>"))
+    }
+
+    @Test fun `defined footnotes work across details and unknown references stay literal`() {
+        val source = """
+            Outside[^1] and [参考^1], unknown[^missing].
+
+            <details><summary>Inside[^1]</summary>Body [^1]</details>
+
+            [^1]: Footnote **content** with [link](https://example.com).
+        """.trimIndent()
+        val blocks = MarkdownDocument.parse(source)
+        val outside = blocks.first() as MarkdownBlock.Paragraph
+        assertEquals(2, outside.runs.count { it.footnoteId == "1" })
+        assertTrue(outside.runs.any { it.text.contains("[^missing]") })
+        assertTrue(outside.runs.first { it.footnoteId == "1" }.footnoteBody!!.contains("**content**"))
+        val details = blocks.filterIsInstance<MarkdownBlock.Details>().single()
+        assertEquals("1", details.summary.first { it.footnoteId != null }.footnoteId)
+        assertEquals("1", (details.blocks.single() as MarkdownBlock.Paragraph).runs.first { it.footnoteId != null }.footnoteId)
+        assertEquals(2, blocks.size)
+    }
+
+    @Test fun `extensions leave escaped and code literals alone`() {
+        val source = """
+            `[^1] ==raw== ${'$'}x${'$'}` \[^1] \==literal== ==marked== H~2~O x^2^ ${'$'}x + y${'$'}
+
+            ```text
+            [^1] ==raw==
+            ```
+
+            [^1]: Defined note.
+        """.trimIndent()
+        val blocks = MarkdownDocument.parse(source)
+        val paragraph = blocks.first() as MarkdownBlock.Paragraph
+        assertTrue(paragraph.runs.any { it.code && it.text.contains("[^1]") })
+        assertTrue(paragraph.runs.any { it.text.contains("[^1]") && it.footnoteId == null })
+        assertTrue(paragraph.runs.any { it.highlight && it.text == "marked" })
+        assertTrue(paragraph.runs.any { it.subscript && it.text == "2" })
+        assertTrue(paragraph.runs.any { it.superscript && it.text == "2" })
+        assertTrue(paragraph.runs.any { it.math && it.text == "x + y" })
+        assertTrue(blocks[1] is MarkdownBlock.Code)
+    }
+
+    @Test fun `images and bare links have distinct semantics`() {
+        val blocks = MarkdownDocument.parse("![chart alt](https://example.com/chart.png) and www.example.com or mail@example.com and https://example.com/a(b).")
+        val runs = (blocks.single() as MarkdownBlock.Paragraph).runs
+        assertEquals("https://example.com/chart.png", runs.first().imageUrl)
+        assertEquals("chart alt", runs.first().text)
+        assertTrue(runs.any { it.link == "https://www.example.com" })
+        assertTrue(runs.any { it.link == "mailto:mail@example.com" })
+        assertTrue(runs.any { it.link == "https://example.com/a(b)" })
+    }
+
+    @Test fun `images only load remote http urls`() {
+        assertEquals("https://example.com/a.png", remoteMarkdownImageUrl("https://example.com/a.png"))
+        assertEquals("http://example.com/a.png", remoteMarkdownImageUrl("http://example.com/a.png"))
+        listOf("file:///data/data/private.png", "content://example/image", "../local.png", "https:///missing-host.png", "javascript:alert(1)")
+            .forEach { assertNull(it, remoteMarkdownImageUrl(it)) }
+    }
+
+    @Test fun `block math and mermaid fences keep their source`() {
+        val blocks = MarkdownDocument.parse("""
+            ${'$'}${'$'}
+            x^2 + y^2
+            ${'$'}${'$'}
+
+            \[
+            a + b
+            \]
+
+            ```mermaid
+            graph TD
+                A --> B
+            ```
+        """.trimIndent())
+        assertEquals("x^2 + y^2", (blocks[0] as MarkdownBlock.Math).text)
+        assertEquals("a + b", (blocks[1] as MarkdownBlock.Math).text)
+        assertEquals("mermaid", (blocks[2] as MarkdownBlock.Code).language)
+    }
+
+    @Test fun `custom syntax does not rewrite reference destinations or nested code`() {
+        val source = """
+            [API][id] and [click](https://example.com/a^b^?q==raw==)
+
+            [id]: https://example.com/a^b^ "Title"
+
+            > ```text
+            > [^1] ==literal== ${'$'}x${'$'}
+            > ```
+
+            - ```text
+              [^1] ==literal==
+              ```
+
+            [^1]: Real definition.
+        """.trimIndent()
+        val blocks = MarkdownDocument.parse(source)
+        val paragraph = blocks.first() as MarkdownBlock.Paragraph
+        assertEquals("https://example.com/a^b^", paragraph.runs.first { it.text == "API" }.link)
+        assertEquals("https://example.com/a^b^?q==raw==", paragraph.runs.first { it.text == "click" }.link)
+        val quote = blocks.filterIsInstance<MarkdownBlock.Quote>().single()
+        assertTrue(quote.blocks.single() is MarkdownBlock.Code)
+        assertTrue(blocks.filterIsInstance<MarkdownBlock.Items>().single().items.single().single() is MarkdownBlock.Code)
+    }
+
+    @Test fun `unknown footnotes currency and private use text remain unchanged`() {
+        val privateUse = "\uE0000\uE001"
+        val source = "Unknown[^404], $privateUse, ${'$'}10 and ${'$'}20"
+        val runs = (MarkdownDocument.parse(source).single() as MarkdownBlock.Paragraph).runs
+        assertEquals(source, runs.joinToString("") { it.text })
+        assertTrue(runs.none { it.footnoteId != null || it.math })
+    }
+
+    @Test fun `safe simple html marks and math fences are semantic`() {
+        val source = "<sup>2</sup> <sub>3</sub> <mark>yellow</mark> <kbd>Ctrl</kbd>"
+        val runs = (MarkdownDocument.parse(source).single() as MarkdownBlock.Paragraph).runs
+        assertTrue(runs.any { it.text == "2" && it.superscript })
+        assertTrue(runs.any { it.text == "3" && it.subscript })
+        assertTrue(runs.any { it.text == "yellow" && it.highlight })
+        assertTrue(runs.any { it.text == "Ctrl" && it.code })
+        listOf("math", "latex", "tex").forEach { language ->
+            assertEquals("a+b", (MarkdownDocument.parse("```$language\na+b\n```").single() as MarkdownBlock.Math).text)
+        }
+    }
+
+    @Test fun `multparagraph footnote body survives and unused definitions stay visible`() {
+        val source = """
+            Referenced[^used].
+
+            [^used]: First paragraph.
+
+                Second paragraph with **emphasis**.
+
+            [^unused]: Important extra note.
+        """.trimIndent()
+        val blocks = MarkdownDocument.parse(source)
+        val run = (blocks.first() as MarkdownBlock.Paragraph).runs.first { it.footnoteId == "used" }
+        assertEquals("First paragraph.\n\nSecond paragraph with **emphasis**.", run.footnoteBody)
+        val unused = blocks.last() as MarkdownBlock.Footnotes
+        assertEquals(listOf("unused"), unused.entries.map { it.first })
+        assertEquals("Important extra note.", unused.entries.single().second)
     }
 
     @Test fun `syntax highlighter preserves text and has safe unknown fallback`() {

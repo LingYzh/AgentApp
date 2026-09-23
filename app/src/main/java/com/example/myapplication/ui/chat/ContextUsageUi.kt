@@ -1,6 +1,14 @@
 package com.example.myapplication.ui.chat
 
 import com.example.myapplication.ui.components.inertWhen
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
@@ -18,11 +26,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.foundation.layout.height
@@ -55,6 +63,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
@@ -173,39 +182,53 @@ internal fun ReasoningEffortMenu(
                 androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.ExpandMore, null, Modifier.size(16.dp))
             }
         }
-        if (expanded) androidx.compose.ui.window.Dialog(onDismissRequest = { draftIndex = effectiveIndex; expanded = false },
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
-            if (!detailed) DialogDimAmount(.15f)
-            Box(Modifier.fillMaxSize().clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {
-                draftIndex = effectiveIndex
-                expanded = false
-            },
-                contentAlignment = Alignment.BottomCenter) {
-            val panelModifier = if (detailed) {
-                Modifier.fillMaxWidth().fillMaxHeight(.9f)
-            } else {
-                Modifier.padding(start = 16.dp, end = 16.dp, bottom = 64.dp).fillMaxWidth().widthIn(max = 640.dp)
-            }
-            Surface(panelModifier.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {},
-                shape = if (detailed) RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp) else RoundedCornerShape(22.dp),
-                color = if (detailed) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surface,
-                border = if (detailed) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-            androidx.compose.animation.AnimatedContent(detailed, label = "reasoning detail") { details ->
-                Box(Modifier.inertWhen(details != detailed || !expanded)) {
-                if (details) {
-                    ReasoningEffortDetails(
-                        support = support,
-                        available = available,
-                        selectedEffort = previewEffort,
-                        enabled = enabled,
-                        onChange = { effort ->
-                            draftIndex = available.indexOf(effort)
-                            onChange(effort)
-                        },
-                        onClose = { draftIndex = effectiveIndex; expanded = false },
-                        onReturn = { detailed = false }
-                    )
+        if (expanded) {
+            val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            // Material measures the sheet inside the actual window, including Android 16
+            // edge-to-edge insets. A fullscreen custom Dialog overmeasured the footer.
+            ModalBottomSheet(
+                onDismissRequest = { draftIndex = effectiveIndex; expanded = false },
+                sheetState = sheetState,
+                dragHandle = null,
+                containerColor = Color.Transparent,
+                scrimColor = Color.Black.copy(alpha = if (detailed) .32f else .15f)
+            ) {
+                ReasoningSheetSystemBars()
+                // Animate both directions inside one inset-aware sheet. Outgoing controls
+                // become inert immediately; they must not apply a second selection mid-exit.
+                AnimatedContent(
+                    targetState = detailed,
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.BottomCenter,
+                    transitionSpec = {
+                        (fadeIn(tween(180, delayMillis = 60)) + slideInVertically(tween(240)) { it / 20 })
+                            .togetherWith(fadeOut(tween(120)) + slideOutVertically(tween(180)) { -it / 30 })
+                            .using(SizeTransform(clip = true) { _, _ -> tween(280) })
+                    },
+                    label = "reasoningPanelMode"
+                ) { showDetails ->
+                val panelModifier = if (showDetails) {
+                    Modifier.fillMaxWidth().fillMaxHeight(.9f)
                 } else {
+                    Modifier.padding(start = 16.dp, end = 16.dp, bottom = 64.dp).fillMaxWidth()
+                }
+                Surface(
+                    modifier = panelModifier.inertWhen(showDetails != detailed),
+                    shape = if (showDetails) RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp) else RoundedCornerShape(22.dp),
+                    color = if (showDetails) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surface,
+                    border = if (showDetails) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    if (showDetails) {
+                        ReasoningEffortDetails(
+                            support, available, previewEffort, enabled,
+                            onChange = { effort ->
+                                draftIndex = available.indexOf(effort)
+                                onChange(effort)
+                                detailed = false
+                            },
+                            onClose = { draftIndex = effectiveIndex; expanded = false }
+                        )
+                    } else {
                     Column(Modifier.heightIn(max = 540.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())
                         .padding(horizontal = 16.dp, vertical = 13.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -256,10 +279,9 @@ internal fun ReasoningEffortMenu(
                         Text("拖动后松手应用；点上方文字查看全部字段值。", style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 5.dp))
                     }
+                    }
                 }
                 }
-            }
-            }
             }
         }
     }
@@ -272,8 +294,7 @@ private fun ReasoningEffortDetails(
     selectedEffort: ReasoningEffort,
     enabled: Boolean,
     onChange: (ReasoningEffort) -> Unit,
-    onClose: () -> Unit,
-    onReturn: () -> Unit
+    onClose: () -> Unit
 ) {
     val scrollState = androidx.compose.foundation.rememberScrollState()
     LaunchedEffect(Unit) { scrollState.scrollTo(0) }
@@ -307,20 +328,7 @@ private fun ReasoningEffortDetails(
             Text("执行中调整只影响下一次模型请求。", Modifier.padding(top = 16.dp, bottom = 12.dp),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        HorizontalDivider()
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.background)
-                .navigationBarsPadding()
-                .padding(16.dp)
-        ) {
-            OutlinedButton(onClick = onReturn, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.ArrowBack, null, Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("返回滑块")
-            }
-        }
+
     }
 }
 
@@ -357,13 +365,19 @@ private fun ReasoningEffortOption(
 }
 
 @Composable
-private fun DialogDimAmount(amount: Float) {
+private fun ReasoningSheetSystemBars() {
     val window = (LocalView.current.parent as? DialogWindowProvider)?.window
-    DisposableEffect(window, amount) {
-        val original = window?.attributes?.dimAmount
-        window?.setDimAmount(amount)
+    val lightBackground = MaterialTheme.colorScheme.background.luminance() > .5f
+    // Material 3 1.3 follows the system theme here; honor the app's manual theme too.
+    DisposableEffect(window, lightBackground) {
+        val controller = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, it.decorView) }
+        val originalStatus = controller?.isAppearanceLightStatusBars
+        val originalNavigation = controller?.isAppearanceLightNavigationBars
+        controller?.isAppearanceLightStatusBars = lightBackground
+        controller?.isAppearanceLightNavigationBars = lightBackground
         onDispose {
-            if (window != null && original != null) window.setDimAmount(original)
+            if (originalStatus != null) controller?.isAppearanceLightStatusBars = originalStatus
+            if (originalNavigation != null) controller?.isAppearanceLightNavigationBars = originalNavigation
         }
     }
 }
@@ -397,10 +411,16 @@ private fun DiscreteReasoningSlider(
             val corners = androidx.compose.ui.geometry.CornerRadius(trackHeight / 2)
             drawRoundRect(inactiveTrack, androidx.compose.ui.geometry.Offset(0f, top),
                 androidx.compose.ui.geometry.Size(size.width, trackHeight), corners)
-            val fill = size.width * fraction
-            if (fill > 0f) drawRoundRect(activeTrack,
-                androidx.compose.ui.geometry.Offset(if (rtl) size.width - fill else 0f, top),
-                androidx.compose.ui.geometry.Size(fill, trackHeight), corners)
+            val fill = inset + (size.width - 2 * inset) * fraction
+            // Clip the complete pill at the thumb center. Rounding a shorter pill
+            // creates a visible rounded gap beside intermediate slider positions.
+            clipRect(
+                left = if (rtl) size.width - fill else 0f,
+                right = if (rtl) size.width else fill
+            ) {
+                drawRoundRect(activeTrack, androidx.compose.ui.geometry.Offset(0f, top),
+                    androidx.compose.ui.geometry.Size(size.width, trackHeight), corners)
+            }
             repeat(count) { index ->
                 val progress = if (count <= 1) 0f else index.toFloat() / (count - 1)
                 val position = inset + (size.width - 2 * inset) * progress
@@ -471,7 +491,8 @@ internal fun ContextUsageSheet(
     canCompact: Boolean,
     onCompact: () -> Unit,
     onCancelCompaction: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    feedback: androidx.compose.material3.SnackbarHostState? = null
 ) {
     var confirmCompaction by remember { mutableStateOf(false) }
     if (confirmCompaction) {
@@ -489,67 +510,73 @@ internal fun ContextUsageSheet(
         sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         val estimated = overview?.estimatedTokens ?: 0L
         val maxTokens = overview?.maxTokens
-        Column(Modifier.fillMaxWidth().fillMaxHeight(.92f).padding(horizontal = 22.dp)) {
-            PanelHeading("上下文占用", onDismiss)
-            Column(Modifier.weight(1f).verticalScroll(androidx.compose.foundation.rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("用不同颜色区分内容来源，空余容量保持中性。", style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("本地估算 · 非计费数据", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(exactTokens(estimated), fontSize = 36.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
-                Text(" tokens", Modifier.padding(bottom = 5.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (maxTokens == null) {
-                Text(
-                    "当前模型没有配置上下文容量。以下仅为本地估算；请在模型设置中填写容量后查看比例。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                Text("约 ${exactTokens(estimated)} / ${exactTokens(maxTokens.toLong())} tokens · ${"%.1f".format(estimated * 100.0 / maxTokens)}%",
-                    style = MaterialTheme.typography.titleSmall)
-            }
-            SegmentedContextBar(overview, Modifier.fillMaxWidth().height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("内容类型", style = MaterialTheme.typography.labelSmall)
-                Text("Token · 占已用比例", style = MaterialTheme.typography.labelSmall)
-            }
-            HorizontalDivider()
-            Text("文本按字符近似估算；媒体按固定近似值计入，实际用量会受分辨率、页数和供应商处理方式影响。",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (overview?.segments.isNullOrEmpty()) {
-                Text("暂无可计入上下文的内容。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                overview.segments.forEach { segment ->
-                    ContextSegmentRow(segment, estimated)
+        com.example.myapplication.ui.components.UiScaffold(
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(.92f),
+            contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
+            topBar = { Column(Modifier.padding(horizontal = 22.dp)) { PanelHeading("上下文占用", onDismiss) } },
+            snackbarHost = { feedback?.let { com.example.myapplication.ui.components.TopFeedbackHost(it) } }
+        ) { panelPadding ->
+            Column(Modifier.fillMaxSize().padding(panelPadding).padding(horizontal = 22.dp)) {
+                Column(Modifier.weight(1f).verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("用不同颜色区分内容来源，空余容量保持中性。", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("本地估算 · 非计费数据", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(exactTokens(estimated), fontSize = 36.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                        Text(" tokens", Modifier.padding(bottom = 5.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (maxTokens == null) {
+                        Text(
+                            "当前模型没有配置上下文容量。以下仅为本地估算；请在模型设置中填写容量后查看比例。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text("约 ${exactTokens(estimated)} / ${exactTokens(maxTokens.toLong())} tokens · ${"%.1f".format(estimated * 100.0 / maxTokens)}%",
+                            style = MaterialTheme.typography.titleSmall)
+                    }
+                    SegmentedContextBar(overview, Modifier.fillMaxWidth().height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("内容类型", style = MaterialTheme.typography.labelSmall)
+                        Text("Token · 占已用比例", style = MaterialTheme.typography.labelSmall)
+                    }
+                    HorizontalDivider()
+                    Text("文本按字符近似估算；媒体按固定近似值计入，实际用量会受分辨率、页数和供应商处理方式影响。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (overview?.segments.isNullOrEmpty()) {
+                        Text("暂无可计入上下文的内容。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        overview.segments.forEach { segment ->
+                            ContextSegmentRow(segment, estimated)
+                        }
+                    }
+                    overview?.compactedMessages?.takeIf { it > 0 }?.let {
+                        Text("已压缩 $it 条较早消息；原始记录仍会保留。", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    ContextUsageRecordCard(overview?.lastUsage)
+                    Spacer(Modifier.height(12.dp))
                 }
-            }
-            overview?.compactedMessages?.takeIf { it > 0 }?.let {
-                Text("已压缩 $it 条较早消息；原始记录仍会保留。", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            ContextUsageRecordCard(overview?.lastUsage)
-            Spacer(Modifier.height(12.dp))
-            }
-            HorizontalDivider()
-            Column(Modifier.padding(vertical = 12.dp)) {
-            if (isCompacting) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(10.dp))
-                    Text(compactionProgress ?: "正在压缩上下文…", style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.weight(1f))
-                    UiTextButton(onClick = onCancelCompaction) { Text("取消") }
+                HorizontalDivider()
+                Column(Modifier.padding(vertical = 12.dp)) {
+                    if (isCompacting) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Text(compactionProgress ?: "正在压缩上下文…", style = MaterialTheme.typography.bodySmall)
+                            Spacer(Modifier.weight(1f))
+                            UiTextButton(onClick = onCancelCompaction) { Text("取消") }
+                        }
+                    } else {
+                        OutlinedButton(onClick = { confirmCompaction = true }, enabled = canCompact, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                            Text("压缩上下文")
+                        }
+                        if (!canCompact) Text("仅空闲的主会话可以压缩上下文。", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-            } else {
-                OutlinedButton(onClick = { confirmCompaction = true }, enabled = canCompact, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                    Text("压缩上下文")
-                }
-                if (!canCompact) Text("仅空闲的主会话可以压缩上下文。", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
             }
         }
     }

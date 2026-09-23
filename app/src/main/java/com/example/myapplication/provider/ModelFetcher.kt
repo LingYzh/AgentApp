@@ -10,7 +10,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-/** A fetched model directory. Absent capability metadata means no native capability. */
+/** Missing metadata remains unknown; attachment delivery defaults conservatively. */
 data class ModelCatalog(
     val models: List<String>,
     val discoveredCapabilities: Map<String, ModelCapabilities>
@@ -29,7 +29,7 @@ class ModelFetcher(private val client: OkHttpClient) {
                 throw ApiException(resp.code, "获取模型列表失败，请检查模型列表地址、凭据与权限")
             }
             val body = resp.body?.string().orEmpty()
-            val json = runCatching { ProviderJson.parseToJsonElement(body).jsonObject }
+            val json = runCatching { ProviderJson.parseToJsonElement(body) }
                 .getOrElse { throw ApiException(-1, "响应不是合法 JSON") }
             when (config.type) {
                 ProviderType.GEMINI -> parseGeminiModelCatalog(json.toString())
@@ -89,10 +89,13 @@ class ModelFetcher(private val client: OkHttpClient) {
          * outside the known modality names deliberately remain disabled.
          */
         fun parseOpenAiStyleModelCatalog(json: String): ModelCatalog = runCatching {
-            val entries = ProviderJson.parseToJsonElement(json).jsonObject["data"]?.jsonArray
+            val root = ProviderJson.parseToJsonElement(json)
+            val entries = (root as? kotlinx.serialization.json.JsonArray
+                ?: (root as? kotlinx.serialization.json.JsonObject)?.get("data") as? kotlinx.serialization.json.JsonArray)
                 ?.mapNotNull { element ->
                     val obj = runCatching { element.jsonObject }.getOrNull() ?: return@mapNotNull null
-                    val id = obj["id"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                    val id = (obj["id"] as? kotlinx.serialization.json.JsonPrimitive)
+                        ?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
                         ?: return@mapNotNull null
                     id to capabilitiesFromExplicitModalities(obj)
                 }
@@ -144,11 +147,14 @@ class ModelFetcher(private val client: OkHttpClient) {
             obj: kotlinx.serialization.json.JsonObject
         ): ModelCapabilities? {
             val architecture = obj["architecture"] as? kotlinx.serialization.json.JsonObject
+            val nestedModalities = obj["modalities"] as? kotlinx.serialization.json.JsonObject
             val architectureModalityFields = listOf(architecture?.get("input_modalities"))
             val rootModalityFields = listOf(
                 obj["input_modalities"],
                 obj["inputModalities"],
-                obj["supportedInputModalities"]
+                obj["supportedInputModalities"],
+                obj["inputTypes"],
+                nestedModalities?.get("input")
             )
             val modalityFields = architectureModalityFields + rootModalityFields
             val hasModalityField = modalityFields.any { it is kotlinx.serialization.json.JsonArray }
@@ -162,17 +168,30 @@ class ModelFetcher(private val client: OkHttpClient) {
             val architectureModalities = modalities(architectureModalityFields)
             val allModalities = modalities(modalityFields)
             val anthropicCapabilities = obj["capabilities"] as? kotlinx.serialization.json.JsonObject
+            // Local gateways commonly use an explicit per-input boolean map.
+            // Output modalities and generic attachment/tool flags are not input support.
+            val inputCapabilities = anthropicCapabilities?.get("input") as? kotlinx.serialization.json.JsonObject
             val anthropicImage = anthropicCapabilities.booleanSupport("image_input")
             val anthropicPdf = anthropicCapabilities.booleanSupport("pdf_input")
-            if (!hasModalityField && anthropicImage == null && anthropicPdf == null) return null
+            val image = anthropicImage ?: inputCapabilities.booleanValue("image")
+                ?: anthropicCapabilities.booleanValue("vision")
+            val pdf = anthropicPdf ?: inputCapabilities.booleanValue("pdf")
+            val audio = inputCapabilities.booleanValue("audio")
+            val video = inputCapabilities.booleanValue("video")
+            if (!hasModalityField && listOf(image, pdf, audio, video).all { it == null }) return null
             return ModelCapabilities(
-                image = anthropicImage ?: ("image" in allModalities),
+                image = image ?: ("image" in allModalities),
                 // OpenRouter documents generic uploaded documents as "file";
                 // this app currently offers native documents only for PDFs.
-                pdf = anthropicPdf ?: ("pdf" in allModalities || "file" in architectureModalities),
-                audio = "audio" in allModalities,
-                video = "video" in allModalities
+                pdf = pdf ?: ("pdf" in allModalities || "file" in architectureModalities),
+                audio = audio ?: ("audio" in allModalities),
+                video = video ?: ("video" in allModalities)
             )
+        }
+
+        private fun kotlinx.serialization.json.JsonObject?.booleanValue(key: String): Boolean? {
+            val primitive = this?.get(key) as? kotlinx.serialization.json.JsonPrimitive ?: return null
+            return if (primitive.isString) null else primitive.content.toBooleanStrictOrNull()
         }
 
         private fun kotlinx.serialization.json.JsonObject?.booleanSupport(key: String): Boolean? {

@@ -1,0 +1,207 @@
+{
+    "url": "http://127.0.0.1:8765/index.html",
+    "pages": [
+        {
+            "name": "01 新对话",
+            "headings": [
+                "  - heading \"把想法， 慢慢变成现实。\" [level=1]:"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "02 对话 · 完成",
+            "headings": [
+                "  - heading \"先把体验的骨架搭好\" [level=3]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "03 对话 · 执行中",
+            "headings": [],
+            "dialogs": []
+        },
+        {
+            "name": "04 历史会话",
+            "headings": [
+                "  - heading \"继续之前的想法\" [level=1]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "05 会话面板",
+            "headings": [
+                "    - heading \"梳理现有功能\" [level=3]",
+                "    - heading \"检查验收点\" [level=3]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "06 子代理 · 只读",
+            "headings": [
+                "  - heading \"已经确认的功能\" [level=3]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "07 计划审批",
+            "headings": [
+                "    - heading \"AgentApp 迭代计划\" [level=1]",
+                "    - heading \"目标\" [level=2]",
+                "    - heading \"第一阶段：整理信息层级\" [level=2]",
+                "    - heading \"第二阶段：完善关键状态\" [level=2]",
+                "    - heading \"验收\" [level=2]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "08 Agents",
+            "headings": [
+                "  - heading \"Agents\" [level=1]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "09 Agent 编辑",
+            "headings": [],
+            "dialogs": []
+        },
+        {
+            "name": "10 工作区文件",
+            "headings": [
+                "  - heading \"工作区\" [level=1]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "11 文件预览 / Diff",
+            "headings": [
+                "    - heading \"AgentApp 迭代计划\" [level=1]",
+                "    - heading \"目标\" [level=2]",
+                "    - heading \"第一阶段：整理信息层级\" [level=2]",
+                "    - heading \"第二阶段：完善关键状态\" [level=2]",
+                "    - heading \"验收\" [level=2]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "12 Skills",
+            "headings": [
+                "  - heading \"Skills\" [level=1]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "13 Skill 编辑",
+            "headings": [],
+            "dialogs": []
+        },
+        {
+            "name": "14 长期记忆",
+            "headings": [
+                "  - heading \"长期记忆\" [level=1]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "15 记忆编辑",
+            "headings": [],
+            "dialogs": []
+        },
+        {
+            "name": "16 模型配置",
+            "headings": [
+                "  - heading \"模型配置\" [level=1]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "17 模型配置编辑",
+            "headings": [],
+            "dialogs": []
+        },
+        {
+            "name": "18 设置",
+            "headings": [],
+            "dialogs": []
+        },
+        {
+            "name": "19 备份与迁移",
+            "headings": [
+                "  - heading \"把配置带走\" [level=1]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "20 自动放行命令",
+            "headings": [],
+            "dialogs": []
+        },
+        {
+            "name": "21 未配置模型",
+            "headings": [
+                "  - heading \"连接你的第一个模型\" [level=2]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "22 请求失败",
+            "headings": [],
+            "dialogs": []
+        },
+        {
+            "name": "23 空列表",
+            "headings": [
+                "  - heading \"把好方法留下来\" [level=2]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "24 组件与配色",
+            "headings": [
+                "  - heading \"温和，但不含糊。\" [level=1]",
+                "  - heading \"让内容自己说话\" [level=2]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "25 Markdown 排版",
+            "headings": [
+                "  - heading \"让内容更好读\" [level=1]",
+                "  - heading \"01 · 信息有层次\" [level=2]",
+                "  - heading \"一份可执行的清单\" [level=3]",
+                "  - heading \"02 · 代码更清楚\" [level=2]",
+                "  - heading \"03 · 表格不挤成细条\" [level=2]",
+                "  - heading \"04 · 阅读的边界\" [level=2]"
+            ],
+            "dialogs": []
+        },
+        {
+            "name": "26 工具记录 · 样本",
+            "headings": [],
+            "dialogs": []
+        }
+    ],
+    "menus": [
+        {
+            "name": "08 Agents",
+            "menu": " \"列表操作\" [active]:\n    - heading \"列表操作\" [level=2]\n    - button \"关闭面板\":\n    - button \"管理与多选\":\n      - generic: 管理与多选\n    - button \"导入\":\n      - generic: 导入\n    - button \"导出\":\n      - generic: 导出\n    - generic: 删除需二次确认。原型内只修改演示数据，刷新可恢复。\n  - paragraph: KOTLIN + COMPOSE REFERENCE · 交互原型 / 演示数据"
+        },
+        {
+            "name": "10 工作区文件",
+            "menu": " \"列表操作\" [active]:\n    - heading \"列表操作\" [level=2]\n    - button \"关闭面板\":\n    - button \"管理与多选\":\n      - generic: 管理与多选\n    - button \"导出\":\n      - generic: 导出\n    - generic: 删除需二次确认。原型内只修改演示数据，刷新可恢复。\n  - paragraph: KOTLIN + COMPOSE REFERENCE · 交互原型 / 演示数据"
+        },
+        {
+            "name": "12 Skills",
+            "menu": " \"列表操作\" [active]:\n    - heading \"列表操作\" [level=2]\n    - button \"关闭面板\":\n    - button \"管理与多选\":\n      - generic: 管理与多选\n    - button \"导入\":\n      - generic: 导入\n    - button \"导出\":\n      - generic: 导出\n    - generic: 删除需二次确认。原型内只修改演示数据，刷新可恢复。\n  - paragraph: KOTLIN + COMPOSE REFERENCE · 交互原型 / 演示数据"
+        },
+        {
+            "name": "14 长期记忆",
+            "menu": " \"列表操作\" [active]:\n    - heading \"列表操作\" [level=2]\n    - button \"关闭面板\":\n    - button \"管理与多选\":\n      - generic: 管理与多选\n    - button \"导入\":\n      - generic: 导入\n    - button \"导出\":\n      - generic: 导出\n    - generic: 删除需二次确认。原型内只修改演示数据，刷新可恢复。\n  - paragraph: KOTLIN + COMPOSE REFERENCE · 交互原型 / 演示数据"
+        },
+        {
+            "name": "16 模型配置",
+            "menu": " \"列表操作\" [active]:\n    - heading \"列表操作\" [level=2]\n    - button \"关闭面板\":\n    - button \"管理与多选\":\n      - generic: 管理与多选\n    - button \"导入\":\n      - generic: 导入\n    - button \"导出\":\n      - generic: 导出\n    - generic: 删除需二次确认。原型内只修改演示数据，刷新可恢复。\n  - paragraph: KOTLIN + COMPOSE REFERENCE · 交互原型 / 演示数据"
+        }
+    ],
+    "boundary": "Browser prototype reference only; native device testing remains pending"
+}

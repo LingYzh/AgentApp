@@ -26,11 +26,9 @@ class ModelResolverTest {
     )
 
     @Test
-    fun `no conversation override falls back to global selected`() {
+    fun `no selection never uses provider test model`() {
         val conv = Conversation()
-        val resolved = ModelResolver.resolve(conv, appConfig, emptyList())!!
-        assertEquals("p1", resolved.id)
-        assertEquals("m1", resolved.model)
+        assertNull(ModelResolver.resolve(conv, appConfig, emptyList()))
     }
 
     @Test
@@ -59,10 +57,25 @@ class ModelResolverTest {
     }
 
     @Test
+    fun `changing test model cannot change an explicit session model`() {
+        val conversation = Conversation(providerIdOverride = p1.id, modelOverride = "chosen")
+        val changed = appConfig.copy(providers = listOf(p1.copy(model = "another-test-model"), p2))
+        assertEquals("chosen", ModelResolver.resolve(conversation, changed, emptyList())!!.model)
+    }
+
+    @Test
+    fun `deleted provider or missing model does not fall through to agent or global`() {
+        assertNull(ModelResolver.resolve(Conversation(agentId = agent.id,
+            providerIdOverride = "deleted", modelOverride = "old"), appConfig, listOf(agent)))
+        assertNull(ModelResolver.resolve(Conversation(agentId = agent.id,
+            providerIdOverride = p1.id), appConfig, listOf(agent)))
+    }
+
+    @Test
     fun `resolved conversation ignores stored provider reasoning strength`() {
         val stored = p1.copy(reasoningEffort = ReasoningEffort.MAX)
         val resolved = ModelResolver.resolve(
-            Conversation(reasoningEffortOverride = null),
+            Conversation(providerIdOverride = p1.id, modelOverride = "session-model", reasoningEffortOverride = null),
             AppConfig(providers = listOf(stored), selectedProviderId = stored.id),
             emptyList()
         )!!

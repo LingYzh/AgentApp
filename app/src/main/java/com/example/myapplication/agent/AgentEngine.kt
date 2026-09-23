@@ -498,8 +498,8 @@ class AgentEngine(
             appendLine("可用模型配置：")
             val providers = appConfig.providers.sortedBy { it.id }
             if (providers.isEmpty()) appendLine("- 无") else providers.forEach { provider ->
-                val label = provider.name.ifBlank { provider.model }
-                val models = (provider.models.ifEmpty { listOf(provider.model) }).sorted().joinToString(", ")
+                val label = provider.name.ifBlank { provider.type.label }
+                val models = provider.models.sorted().joinToString(", ")
                 appendLine("- $label: $models")
             }
         }

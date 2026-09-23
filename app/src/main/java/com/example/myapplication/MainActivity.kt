@@ -116,6 +116,7 @@ object Routes {
     const val NEW_CHAT = "newChat?agentId={agentId}"
     const val CONVERSATIONS = "conversations"
     const val CHAT = "chat/{conversationId}?session={session}"
+    const val SESSION = "session/{conversationId}"
     const val PROVIDERS = "providers"
     const val PROVIDER_EDIT = "providerEdit/{providerId}"
     const val FILES = "files"
@@ -129,6 +130,7 @@ object Routes {
 
     fun newChat(agentId: String? = null) = "newChat" + (agentId?.let { "?agentId=$it" } ?: "")
     fun chat(id: String, session: String? = null) = "chat/$id" + (session?.let { "?session=$it" } ?: "")
+    fun session(id: String) = "session/$id"
     fun providerEdit(id: String) = "providerEdit/$id"
     fun fileView(path: String) = "fileView/" + URLEncoder.encode(path, StandardCharsets.UTF_8.toString())
     fun skillEdit(name: String) = "skillEdit/" + URLEncoder.encode(name, StandardCharsets.UTF_8.toString())
@@ -225,8 +227,10 @@ fun AppRoot() {
     val isTopLevel = currentRoute in TopLevelRoutes
     val app = LocalContext.current.applicationContext as AgentApp
     var recent by remember { mutableStateOf(emptyList<Conversation>()) }
+    var drawerAgents by remember { mutableStateOf(emptyList<com.example.myapplication.data.model.AgentProfile>()) }
     LaunchedEffect(drawerState.targetValue, currentRoute) {
         if (drawerState.targetValue == DrawerValue.Open) {
+            drawerAgents = withContext(Dispatchers.IO) { app.store.loadAgents() }
             recent = withContext(Dispatchers.IO) {
                 app.store.listConversations().filter { it.parentConversationId == null }
                     .sortedByDescending { it.messages.maxOfOrNull { message -> message.timestamp } ?: it.createdAt }.take(3)
@@ -253,6 +257,7 @@ fun AppRoot() {
                 AppDrawerSheetContent(
                     currentRoute = currentRoute,
                     recent = recent,
+                    agents = drawerAgents,
                     onClose = { scope.launch { drawerState.close() } },
                     onNavigate = { route ->
                         scope.launch { drawerState.close() }
@@ -317,6 +322,12 @@ fun AppRoot() {
                     )
                 }
                 composable(Routes.PROVIDERS) { ProvidersScreen(navController, openDrawer) }
+                composable(Routes.SESSION,
+                    arguments = listOf(navArgument("conversationId") { type = NavType.StringType })
+                ) { entry ->
+                    com.example.myapplication.ui.chat.SessionScreen(navController,
+                        requireNotNull(entry.arguments?.getString("conversationId")))
+                }
                 composable(
                     Routes.PROVIDER_EDIT,
                     arguments = listOf(navArgument("providerId") { type = NavType.StringType }),
@@ -393,6 +404,7 @@ fun AppDrawerSheetContent(
     currentRoute: String?,
     onNavigate: (String) -> Unit,
     recent: List<Conversation> = emptyList(),
+    agents: List<com.example.myapplication.data.model.AgentProfile> = emptyList(),
     onClose: () -> Unit = {}
 ) {
     val entries = listOf(
@@ -400,7 +412,7 @@ fun AppDrawerSheetContent(
         DrawerEntry(Routes.FILES, "工作区文件", Icons.Outlined.Folder),
         DrawerEntry(Routes.SKILLS, "Skills", Icons.Outlined.Inventory2),
         DrawerEntry(Routes.MEMORY, "长期记忆", Icons.Outlined.Psychology),
-        DrawerEntry(Routes.PROVIDERS, "模型配置", Icons.Outlined.Memory)
+        DrawerEntry(Routes.PROVIDERS, "模型供应商设置", Icons.Outlined.Memory)
     )
     Column(Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.background).navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
@@ -422,8 +434,16 @@ fun AppDrawerSheetContent(
             recent.forEach { conversation ->
                 key(conversation.id) {
                     Surface(onClick = { onNavigate(Routes.chat(conversation.id)) }, color = androidx.compose.ui.graphics.Color.Transparent) {
-                        Box(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 13.dp), contentAlignment = Alignment.CenterStart) {
-                            Text(conversation.title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, fontSize = 12.sp)
+                        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 13.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            val agent = agents.firstOrNull { it.id == conversation.agentId }
+                            com.example.myapplication.ui.agents.AgentAvatar(agent?.emoji.orEmpty(), agent?.avatarPath, size = 28.dp)
+                            Column(Modifier.weight(1f)) {
+                                Text(conversation.title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, fontSize = 12.sp)
+                                Text(agent?.name ?: if (conversation.agentId == null) "通用助手" else "Agent 已删除",
+                                    maxLines = 1, style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }

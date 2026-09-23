@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -27,6 +28,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.StrokeCap
@@ -42,10 +44,12 @@ import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
@@ -56,6 +60,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import coil.compose.AsyncImage
 
 /** Native Compose blocks: no AndroidView replacement or whole-message text layout reset. */
 @Composable
@@ -65,18 +70,27 @@ fun MarkdownContent(text: String, modifier: Modifier = Modifier, streaming: Bool
     // back into an older message). Only subsequent streamed updates parse in the background.
     var document by remember { mutableStateOf(MarkdownDocument.parse(text)) }
     var parsedText by remember { mutableStateOf(text) }
+    val pacer = remember { StreamingTextPacer(text) }
     // Sampling continues to draw during an uninterrupted stream. Keep the previous document
     // visible until parsing completes, including the final update. Never animate replacements.
     LaunchedEffect(streaming, if (streaming) null else text) {
         do {
-            val source = latest
+            val started = System.nanoTime()
+            val source = pacer.next(latest, started / 1_000_000, streaming)
             if (parsedText != source) {
-                val parsed = withContext(Dispatchers.Default) { MarkdownDocument.parse(source) }
+                val previous = document
+                val parsed = withContext(Dispatchers.Default) {
+                    reuseMarkdownBlocks(previous, MarkdownDocument.parse(source))
+                }
                 document = parsed
                 parsedText = source
             }
             if (!streaming) break
-            delay(120)
+            // Target 30Hz on cheap paragraphs; expensive documents back off without adding
+            // a fixed 120ms after their parse. The old document stays visible throughout.
+            val spentMs = (System.nanoTime() - started) / 1_000_000
+            val intervalMs = (spentMs * 2).coerceIn(32L, 120L)
+            delay((intervalMs - spentMs).coerceAtLeast(1L))
         } while (isActive)
     }
     SelectionContainer(modifier.fillMaxWidth()) { MarkdownBlocks(document) }
@@ -93,25 +107,70 @@ private fun MarkdownBlocks(
         blocks.forEachIndexed { index, block ->
             key(index, block.javaClass) {
                 when (block) {
-                    is MarkdownBlock.Paragraph -> RichMarkdownText(
+                    is MarkdownBlock.Paragraph -> MarkdownParagraph(
                         block.runs,
                         style = paragraphStyle ?: TextStyle(fontSize = 16.sp, lineHeight = 29.sp),
                         color = paragraphColor ?: MaterialTheme.colorScheme.onSurface
                     )
                     is MarkdownBlock.Heading -> {
-                        val size = when (block.level) { 1 -> 27; 2 -> 21; 3 -> 18; else -> 16 }
+                        val size = when (block.level) { 1 -> 28; 2 -> 23; 3 -> 20; 4 -> 18; 5 -> 16; else -> 14 }
                         RichMarkdownText(block.runs, style = TextStyle(fontSize = size.sp,
-                            lineHeight = (size + 8).sp, fontWeight = FontWeight.SemiBold),
+                            lineHeight = (size + 8).sp, fontWeight = if (block.level <= 3) FontWeight.Bold else FontWeight.SemiBold),
                             modifier = Modifier.padding(top = if (index == 0) 0.dp else 6.dp))
                     }
                     is MarkdownBlock.Code -> MarkdownCode(block, Modifier.padding(top = 7.dp, bottom = 11.dp))
+                    is MarkdownBlock.Math -> MarkdownMathBlock(block.text)
                     is MarkdownBlock.Details -> MarkdownDetails(block)
                     is MarkdownBlock.Quote -> MarkdownQuote(block, Modifier.padding(top = 8.dp, bottom = 11.dp))
                     is MarkdownBlock.Items -> MarkdownList(block, paragraphStyle, paragraphColor)
                     is MarkdownBlock.Table -> MarkdownTable(block)
+                    is MarkdownBlock.Footnotes -> MarkdownFootnotes(block)
                     MarkdownBlock.Rule -> HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant,
                         modifier = Modifier.padding(vertical = 4.dp))
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarkdownFootnotes(block: MarkdownBlock.Footnotes) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Text("未引用脚注", style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        block.entries.forEach { (id, body) ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("[$id]", color = MaterialTheme.colorScheme.primary)
+                val content = remember(body) { MarkdownDocument.parseFootnoteBody(body) }
+                MarkdownBlocks(content, Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarkdownMathBlock(source: String) {
+    val clipboard = LocalClipboardManager.current
+    var showSource by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    Surface(shape = RoundedCornerShape(13.dp), color = codeSurfaceColor(),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text("公式", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+                UiTextButton(onClick = { showSource = !showSource }) {
+                    Text(if (showSource) "查看公式" else "查看源码", style = MaterialTheme.typography.labelMedium)
+                }
+                UiTextButton(onClick = { clipboard.setText(AnnotatedString(source)) }) {
+                    Text("复制", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            if (showSource) {
+                Text(source, Modifier.padding(14.dp), fontFamily = FontFamily.Monospace)
+            } else {
+                MarkdownRichBlock(source, "math", Modifier.fillMaxWidth().padding(14.dp))
             }
         }
     }
@@ -129,7 +188,7 @@ private fun MarkdownQuote(block: MarkdownBlock.Quote, modifier: Modifier = Modif
             Box(Modifier.fillMaxHeight().width(3.dp).background(Color(0xFFD97757)))
             MarkdownBlocks(
                 block.blocks,
-                Modifier.weight(1f).padding(start = 16.dp, top = 14.dp, end = 15.dp, bottom = 1.dp),
+                Modifier.weight(1f).padding(start = 16.dp, top = 14.dp, end = 15.dp, bottom = 14.dp),
                 paragraphStyle = TextStyle(fontSize = 14.sp, lineHeight = 26.sp),
                 paragraphColor = colors.onSurfaceVariant
             )
@@ -155,13 +214,54 @@ private fun MarkdownDetails(block: MarkdownBlock.Details) {
                 RichMarkdownText(block.summary, Modifier.weight(1f).padding(start = 9.dp),
                     style = TextStyle(fontSize = 14.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium))
             }
-            if (expanded) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f))
+            androidx.compose.animation.AnimatedVisibility(expanded) {
                 bodyState.SaveableStateProvider("details-content") {
-                    MarkdownBlocks(block.blocks, Modifier.padding(horizontal = 14.dp, vertical = 12.dp))
+                    Column(Modifier.inertWhen(!expanded)) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f))
+                        MarkdownBlocks(block.blocks, Modifier.padding(horizontal = 14.dp, vertical = 12.dp))
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MarkdownParagraph(
+    runs: List<MarkdownRun>, modifier: Modifier = Modifier,
+    style: TextStyle = TextStyle(fontSize = 16.sp, lineHeight = 29.sp),
+    color: Color = MaterialTheme.colorScheme.onSurface
+) {
+    if (runs.none { it.imageUrl != null }) {
+        RichMarkdownText(runs, modifier, style = style, color = color)
+        return
+    }
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        var cursor = 0
+        runs.forEachIndexed { index, run ->
+            if (run.imageUrl == null) return@forEachIndexed
+            if (index > cursor) RichMarkdownText(runs.subList(cursor, index), style = style, color = color)
+            MarkdownImage(run)
+            cursor = index + 1
+        }
+        if (cursor < runs.size) RichMarkdownText(runs.subList(cursor, runs.size), style = style, color = color)
+    }
+}
+
+@Composable
+private fun MarkdownImage(run: MarkdownRun) {
+    var failed by remember(run.imageUrl) { mutableStateOf(false) }
+    val source = remember(run.imageUrl) { remoteMarkdownImageUrl(run.imageUrl) }
+    if (failed || source == null) {
+        Text(run.text.ifBlank { "图片加载失败" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    } else {
+        AsyncImage(
+            model = source,
+            contentDescription = run.text.ifBlank { "Markdown 图片" },
+            onError = { failed = true },
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp, max = 320.dp)
+        )
     }
 }
 
@@ -174,12 +274,21 @@ private fun RichMarkdownText(
 ) {
     val colors = MaterialTheme.colorScheme
     val uriHandler = LocalUriHandler.current
+    var selectedFootnote by remember { mutableStateOf<MarkdownRun?>(null) }
+    if (runs.any { it.math }) {
+        MarkdownMathText(runs, style, color, modifier, onFootnote = { selectedFootnote = it })
+        selectedFootnote?.let { FootnoteDialog(it) { selectedFootnote = null } }
+        return
+    }
     val presentation = remember(runs, colors, uriHandler, style) {
         val codeRanges = mutableListOf<InlineCodeRange>()
         buildAnnotatedString {
             runs.forEach { run ->
                 val start = length
-                if (run.link != null) pushLink(LinkAnnotation.Url(run.link,
+                if (run.footnoteId != null) pushLink(LinkAnnotation.Url("markdown-footnote:${run.footnoteId}",
+                    styles = TextLinkStyles(style = SpanStyle(color = colors.primary, textDecoration = TextDecoration.Underline)),
+                    linkInteractionListener = { selectedFootnote = run }))
+                else if (run.link != null) pushLink(LinkAnnotation.Url(run.link,
                     styles = TextLinkStyles(style = SpanStyle(color = colors.primary, textDecoration = TextDecoration.Underline)),
                     linkInteractionListener = {
                         if (run.link.substringBefore(':').lowercase() in setOf("https", "http", "mailto", "tel")) {
@@ -191,21 +300,66 @@ private fun RichMarkdownText(
                     fontStyle = if (run.italic) FontStyle.Italic else null,
                     fontFamily = if (run.code) FontFamily.Monospace else null,
                     fontSize = if (run.code) inlineCodeFontSize(style) else TextUnit.Unspecified,
-                    color = if (run.link != null) colors.primary else androidx.compose.ui.graphics.Color.Unspecified,
+                    baselineShift = when {
+                        run.superscript || run.footnoteId != null -> BaselineShift.Superscript
+                        run.subscript -> BaselineShift.Subscript
+                        else -> null
+                    },
+                    background = if (run.highlight) colors.tertiaryContainer else Color.Unspecified,
+                    color = if (run.link != null || run.footnoteId != null) colors.primary else Color.Unspecified,
                     textDecoration = when {
                         run.strike -> TextDecoration.LineThrough
-                        run.link != null -> TextDecoration.Underline
+                        run.link != null || run.footnoteId != null -> TextDecoration.Underline
                         else -> null
                     }
                 )) { append(run.text) }
-                if (run.link != null) pop()
-                if (run.code && length > start) codeRanges += InlineCodeRange(start, length)
+                if (run.link != null || run.footnoteId != null) pop()
+                if (run.code && length > start) {
+                    codeRanges += InlineCodeRange(
+                        start,
+                        length,
+                        InlineCodeStyle(
+                            fontWeight = if (run.bold) FontWeight.SemiBold else style.fontWeight,
+                            fontStyle = if (run.italic) FontStyle.Italic else style.fontStyle
+                        )
+                    )
+                }
             }
         }.let { MarkdownTextPresentation(it, codeRanges) }
     }
+    val textMeasurer = rememberTextMeasurer()
+    val codeStyles = remember(presentation.codeRanges) { presentation.codeRanges.map { it.style }.distinct() }
+    val codeFontMetrics = remember(textMeasurer, style, codeStyles) {
+        codeStyles.associateWith { codeStyle ->
+            val metricsLayout = textMeasurer.measure(
+                text = AnnotatedString("Ag中"),
+                style = TextStyle(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = inlineCodeFontSize(style),
+                    fontWeight = codeStyle.fontWeight,
+                    fontStyle = codeStyle.fontStyle,
+                    localeList = style.localeList,
+                    fontSynthesis = style.fontSynthesis
+                )
+            )
+            val baseline = metricsLayout.getLineBaseline(0)
+            InlineCodeFontMetrics(
+                ascent = baseline - metricsLayout.getLineTop(0),
+                descent = metricsLayout.getLineBottom(0) - baseline
+            )
+        }
+    }
     var layout by remember(presentation) { mutableStateOf<TextLayoutResult?>(null) }
     val decoratedModifier = modifier.fillMaxWidth().drawBehind {
-        layout?.let { drawInlineCodeBackgrounds(it, presentation.codeRanges, colors.surfaceContainerLow, colors.outlineVariant) }
+        layout?.let {
+            drawInlineCodeBackgrounds(
+                it,
+                presentation.codeRanges,
+                codeFontMetrics,
+                colors.surfaceContainerLow,
+                colors.outlineVariant
+            )
+        }
     }
     Text(
         presentation.annotated,
@@ -215,9 +369,26 @@ private fun RichMarkdownText(
         textAlign = textAlign,
         onTextLayout = { layout = it }
     )
+    selectedFootnote?.let { FootnoteDialog(it) { selectedFootnote = null } }
 }
 
-private data class InlineCodeRange(val start: Int, val endExclusive: Int)
+@Composable
+private fun FootnoteDialog(run: MarkdownRun, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("脚注 ${run.footnoteId}") },
+        text = { MarkdownContent(run.footnoteBody.orEmpty()) },
+        confirmButton = { UiTextButton(onClick = onDismiss) { Text("关闭") } }
+    )
+}
+
+private data class InlineCodeStyle(val fontWeight: FontWeight?, val fontStyle: FontStyle?)
+
+private data class InlineCodeRange(
+    val start: Int,
+    val endExclusive: Int,
+    val style: InlineCodeStyle
+)
 
 private data class MarkdownTextPresentation(
     val annotated: AnnotatedString,
@@ -230,6 +401,7 @@ private fun inlineCodeFontSize(style: TextStyle): androidx.compose.ui.unit.TextU
 private fun DrawScope.drawInlineCodeBackgrounds(
     layout: TextLayoutResult,
     ranges: List<InlineCodeRange>,
+    fontMetrics: Map<InlineCodeStyle, InlineCodeFontMetrics>,
     background: Color,
     outline: Color
 ) {
@@ -240,6 +412,7 @@ private fun DrawScope.drawInlineCodeBackgrounds(
     val source = layout.layoutInput.text
     ranges.forEach { range ->
         if (range.start >= range.endExclusive || range.start >= layout.layoutInput.text.length) return@forEach
+        val metrics = fontMetrics[range.style] ?: return@forEach
         val lastOffset = (range.endExclusive - 1).coerceAtMost(layout.layoutInput.text.length - 1)
         val firstLine = layout.getLineForOffset(range.start)
         val lastLine = layout.getLineForOffset(lastOffset)
@@ -247,42 +420,40 @@ private fun DrawScope.drawInlineCodeBackgrounds(
             val start = maxOf(range.start, layout.getLineStart(line))
             val end = minOf(lastOffset + 1, layout.getLineEnd(line))
             if (start >= end) continue
-            val codeGlyphs = (start until end).map(layout::getBoundingBox)
-                .filter { it.width > 0f || it.height > 0f }
-                .sortedBy(Rect::left)
-            codeGlyphs.foldVisualSegments().forEach { segment ->
+            val codeGlyphs = (start until end).map { offset ->
+                val glyph = layout.getBoundingBox(offset)
+                InlineCodeGlyphBounds(
+                    character = source[offset],
+                    left = glyph.left,
+                    top = glyph.top,
+                    right = glyph.right,
+                    bottom = glyph.bottom
+                )
+            }
+            inlineCodeBackgroundSegments(
+                codeGlyphs,
+                layout.getLineBaseline(line),
+                metrics
+            ).forEach segmentLoop@ { segment ->
+                val segmentRect = Rect(segment.left, segment.top, segment.right, segment.bottom)
                 val (leftPadding, rightPadding) = inlineCodePadding(
-                    layout, source, line, range, segment, horizontalPadding
+                    layout, source, line, range, segmentRect, horizontalPadding
                 )
                 val left = (segment.left - leftPadding).coerceAtLeast(0f)
                 val right = (segment.right + rightPadding).coerceAtMost(size.width)
-                val top = (segment.top - verticalPadding).coerceAtLeast(0f)
-                val bottom = (segment.bottom + verticalPadding).coerceAtMost(size.height)
+                val top = (segment.top - verticalPadding)
+                    .coerceAtLeast(layout.getLineTop(line))
+                    .coerceAtLeast(0f)
+                val bottom = (segment.bottom + verticalPadding)
+                    .coerceAtMost(layout.getLineBottom(line))
+                    .coerceAtMost(size.height)
+                if (bottom <= top || right <= left) return@segmentLoop
                 val box = Size((right - left).coerceAtLeast(0f), (bottom - top).coerceAtLeast(0f))
                 drawRoundRect(background, Offset(left, top), box, corner)
                 drawRoundRect(outline, Offset(left, top), box, corner, style = stroke)
             }
         }
     }
-}
-
-private fun List<Rect>.foldVisualSegments(): List<Rect> {
-    if (isEmpty()) return emptyList()
-    val segments = mutableListOf<Rect>()
-    var current = first()
-    drop(1).forEach { glyph ->
-        if (glyph.left <= current.right + .5f) {
-            current = Rect(
-                left = minOf(current.left, glyph.left), top = minOf(current.top, glyph.top),
-                right = maxOf(current.right, glyph.right), bottom = maxOf(current.bottom, glyph.bottom)
-            )
-        } else {
-            segments += current
-            current = glyph
-        }
-    }
-    segments += current
-    return segments
 }
 
 private fun DrawScope.inlineCodePadding(
@@ -299,12 +470,18 @@ private fun DrawScope.inlineCodePadding(
     var rightNeighbor: Pair<Rect, Char>? = null
     for (offset in lineStart until lineEnd) {
         if (offset in range.start until range.endExclusive) continue
+        val character = source[offset]
+        if (character == '\n' || character == '\r' || character == '\u2028' || character == '\u2029') continue
         val glyph = layout.getBoundingBox(offset)
+        if (!glyph.left.isFinite() || !glyph.top.isFinite() ||
+            !glyph.right.isFinite() || !glyph.bottom.isFinite() ||
+            glyph.right <= glyph.left || glyph.bottom <= glyph.top
+        ) continue
         if (glyph.right <= segment.left && (leftNeighbor == null || glyph.right > leftNeighbor!!.first.right)) {
-            leftNeighbor = glyph to source[offset]
+            leftNeighbor = glyph to character
         }
         if (glyph.left >= segment.right && (rightNeighbor == null || glyph.left < rightNeighbor!!.first.left)) {
-            rightNeighbor = glyph to source[offset]
+            rightNeighbor = glyph to character
         }
     }
     return edgePadding(segment.left, leftNeighbor, desired, fromLeft = true) to
@@ -378,6 +555,8 @@ private fun MarkdownTaskCheck(checked: Boolean) {
 private fun MarkdownCode(block: MarkdownBlock.Code, modifier: Modifier = Modifier) {
     val clipboard = LocalClipboardManager.current
     var wrap by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val mermaid = block.language.equals("mermaid", ignoreCase = true)
+    var showSource by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var animateResize by remember { mutableStateOf(false) }
     LaunchedEffect(wrap) { if (animateResize) { delay(240); animateResize = false } }
     var copied by remember(block.text) { mutableStateOf(false) }
@@ -392,7 +571,13 @@ private fun MarkdownCode(block: MarkdownBlock.Code, modifier: Modifier = Modifie
                 .padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(block.language.ifBlank { "代码" }, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                UiTextButton(onClick = { animateResize = true; wrap = !wrap }) { Text(if (wrap) "不换行" else "换行", style = MaterialTheme.typography.labelMedium) }
+                if (mermaid) {
+                    UiTextButton(onClick = { showSource = !showSource }) {
+                        Text(if (showSource) "查看图表" else "查看源码", style = MaterialTheme.typography.labelMedium)
+                    }
+                } else {
+                    UiTextButton(onClick = { animateResize = true; wrap = !wrap }) { Text(if (wrap) "不换行" else "换行", style = MaterialTheme.typography.labelMedium) }
+                }
                 UiTextButton(onClick = { clipboard.setText(AnnotatedString(block.text)); copied = true }) {
                     androidx.compose.animation.Crossfade(copied, label = "copy code") {
                         Text(if (it) "已复制" else "复制", style = MaterialTheme.typography.labelMedium)
@@ -400,10 +585,14 @@ private fun MarkdownCode(block: MarkdownBlock.Code, modifier: Modifier = Modifie
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
-            val horizontal = rememberScrollState()
-            val scrollModifier = if (wrap) Modifier else Modifier.horizontalScroll(horizontal)
-            Box(Modifier.fillMaxWidth().animateContentSize(if (animateResize) tween(240) else snap()).then(scrollModifier).padding(14.dp)) {
-                CodeText(highlighted, block.text, wrap)
+            if (mermaid && !showSource) {
+                MarkdownRichBlock(block.text, "mermaid", Modifier.fillMaxWidth().padding(14.dp))
+            } else {
+                val horizontal = rememberScrollState()
+                val scrollModifier = if (wrap) Modifier else Modifier.horizontalScroll(horizontal)
+                Box(Modifier.fillMaxWidth().animateContentSize(if (animateResize) tween(240) else snap()).then(scrollModifier).padding(14.dp)) {
+                    CodeText(highlighted, block.text, wrap)
+                }
             }
         }
     }

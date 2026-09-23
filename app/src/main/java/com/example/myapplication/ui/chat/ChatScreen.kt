@@ -4,6 +4,7 @@ import androidx.compose.material.icons.outlined.Edit
 
 import com.example.myapplication.ui.components.UiScaffold
 import com.example.myapplication.ui.components.MarkdownContent
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.material3.*
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.material.icons.filled.*
@@ -276,7 +277,7 @@ class ChatViewModel(
             }
             agents = loadedAgents
             _modelOptions.value = config.providers.flatMap { p ->
-                (listOf(p.model) + p.models).filter { it.isNotBlank() }.distinct().map { p to it }
+                p.models.filter { it.isNotBlank() }.distinct().map { p to it }
             }
             if (conv != null) {
                 conversation = conv
@@ -500,7 +501,7 @@ class ChatViewModel(
             val config = withContext(Dispatchers.IO) { app.store.loadConfig() }
             agents = withContext(Dispatchers.IO) { app.store.loadAgents() }
             _modelOptions.value = config.providers.flatMap { provider ->
-                (listOf(provider.model) + provider.models).filter { it.isNotBlank() }.distinct().map { provider to it }
+                provider.models.filter { it.isNotBlank() }.distinct().map { provider to it }
             }
             conversation?.let { updateResolvedModel(ModelResolver.resolve(it, config, agents)); refreshContextOverview() }
             while (true) {
@@ -654,7 +655,7 @@ class ChatViewModel(
             if (delivery == "native") {
                 val reason = if (resolved == null) "请先配置模型" else app.attachmentStore.nativeRejection(resolved, attachment)
                 if (reason != null) {
-                    _error.value = "$reason；可在模型配置中开启对应能力，或使用工作区文件"
+                    _error.value = "$reason；可在模型供应商设置中开启对应能力，或使用工作区文件"
                     return@launch
                 }
             }
@@ -677,7 +678,7 @@ class ChatViewModel(
                 val appConfig = withContext(Dispatchers.IO) { app.store.loadConfig() }
                 val resolved = ModelResolver.resolve(conv, appConfig, agents)
                 if (resolved == null) {
-                    _error.value = "请先在「模型配置」中添加并选择一个模型"
+                    _error.value = "请先在聊天输入框中选择模型；没有可选模型时，可到「模型供应商设置」获取或添加模型"
                     return@launch
                 }
                 val attachments = _attachments.value.toList()
@@ -802,8 +803,8 @@ class ChatViewModel(
         }
     }
 
-    fun clearError() {
-        _error.value = null
+    fun clearError(expected: String? = null) {
+        if (expected == null || _error.value == expected) _error.value = null
     }
 }
 
@@ -852,13 +853,8 @@ fun ChatScreen(
     val permissionMode by vm.permissionMode.collectAsStateWithLifecycle()
     val fileScope by vm.fileScope.collectAsStateWithLifecycle()
     val workingDirectory by vm.workingDirectory.collectAsStateWithLifecycle()
-    val plan by vm.plan.collectAsStateWithLifecycle()
     val pending by app.permissionCoordinator.pending.collectAsStateWithLifecycle()
-    pending.firstOrNull { it.conversationId == activeConversationId }?.let { request ->
-        PermissionRequestDialog(request) { decision, feedback ->
-            app.permissionCoordinator.resolve(request.id, decision, feedback)
-        }
-    }
+    ConversationApprovalHost(activeConversationId)
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { vm.addAttachments(it) }
     val snackbar = remember { SnackbarHostState() }
 
@@ -867,12 +863,7 @@ fun ChatScreen(
         onStopOrDispose { observation.cancel() }
     }
 
-    LaunchedEffect(error) {
-        error?.let {
-            snackbar.showSnackbar(com.example.myapplication.ui.components.ErrorFeedback(it))
-            vm.clearError()
-        }
-    }
+    ConversationFeedbackEffect(vm, error, snackbar)
 
     val agentScope = rememberCoroutineScope()
     var availableAgents by remember { mutableStateOf(emptyList<AgentProfile>()) }
@@ -922,7 +913,6 @@ fun ChatScreen(
         fileScope = fileScope,
         workingDirectory = workingDirectory,
         defaultWorkingDirectory = app.store.workspaceDir.absolutePath,
-        planContent = plan,
         onUpdatePermissions = vm::updatePermissions,
         historyBusy = historyBusy,
         onEditMessage = vm::editMessage,
@@ -932,6 +922,7 @@ fun ChatScreen(
         canStopChild = childSnapshot?.executionStatus == "running" && !stopRequested,
         onStopChild = vm::stopChild,
         onOpenChild = { navController.safeNavigateDirect(Routes.chat(it)) },
+        onOpenSession = { activeConversationId?.let { navController.safeNavigateDirect(Routes.session(it)) } },
         sendRevision = sendRevision,
         onAddAttachments = { picker.launch(arrayOf("*/*")) },
         onRemoveAttachment = vm::removeAttachment,
@@ -976,7 +967,6 @@ fun ChatContent(
     fileScope: List<String> = emptyList(),
     workingDirectory: String? = null,
     defaultWorkingDirectory: String = "",
-    planContent: String? = null,
     onUpdatePermissions: suspend (PermissionMode, List<String>, String?) -> String? = { _, _, _ -> null },
     childExecutionStatus: String? = null,
     childStopReason: String? = null,
@@ -1001,7 +991,8 @@ fun ChatContent(
     availableAgents: List<AgentProfile> = emptyList(),
     onSelectAgent: (AgentProfile?) -> Unit = {},
     conversationKey: String = "",
-    onRenameConversation: suspend (String) -> String? = { null }
+    onRenameConversation: suspend (String) -> String? = { null },
+    onOpenSession: () -> Unit = {}
 ) {
     val listState = rememberLazyListState()
     var renameDialog by rememberSaveable(conversationKey) { mutableStateOf(false) }
@@ -1015,7 +1006,6 @@ fun ChatContent(
     var submittedInput by rememberSaveable { mutableStateOf<String?>(null) }
     var modelMenuExpanded by remember { mutableStateOf(false) }
     var showPermissions by remember { mutableStateOf(false) }
-    var showPlan by remember { mutableStateOf(false) }
     var showContextUsage by remember { mutableStateOf(false) }
     var previewAttachment by remember { mutableStateOf<MessageAttachment?>(null) }
     var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
@@ -1040,7 +1030,6 @@ fun ChatContent(
         onDismiss = { showPermissions = false }, onSave = { mode, directories, directory ->
             onUpdatePermissions(mode, directories, directory)
         })
-    if (showPlan) PlanDocumentDialog(planContent.orEmpty()) { showPlan = false }
     if (showContextUsage) {
         ContextUsageSheet(
             overview = contextOverview,
@@ -1049,14 +1038,11 @@ fun ChatContent(
             canCompact = !readOnly && !streaming && !historyBusy && !compacting,
             onCompact = onCompactContext,
             onCancelCompaction = onCancelCompaction,
+            feedback = snackbarHostState,
             onDismiss = { showContextUsage = false }
         )
     }
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    androidx.activity.compose.BackHandler(enabled = drawerState.isOpen) {
-        scope.launch { drawerState.close() }
-    }
 
     var stopDialog by remember { mutableStateOf(false) }
     var stopReason by rememberSaveable { mutableStateOf("") }
@@ -1134,25 +1120,20 @@ fun ChatContent(
                 userScrollPending = false
             }
             if (followLatest && !userScrolling && !exactlyAtBottom) {
-                listState.scrollToChatBottom(viewport.lastItemIndex)
+                try {
+                    listState.scrollToChatBottom(viewport.lastItemIndex)
+                } catch (cancelled: CancellationException) {
+                    // A user gesture cancels the scroll mutation, not the follow observer.
+                    // Lifecycle cancellation must still propagate.
+                    currentCoroutineContext().ensureActive()
+                }
             }
         }
     }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        // Closed session details must not intercept the global drawer's left-edge gesture.
-        gesturesEnabled = drawerState.isOpen,
-        drawerContent = {
-            SessionDrawer(children, onOpen = { id ->
-                scope.launch { drawerState.close(); onOpenChild(id) }
-            }, planContent = planContent, onOpenPlan = {
-                scope.launch { drawerState.close(); showPlan = true }
-            })
-        }
-    ) {
+    Box(Modifier.fillMaxSize()) {
         UiScaffold(
-            snackbarHost = { TopFeedbackHost(snackbarHostState) },
+            snackbarHost = { if (!showContextUsage) TopFeedbackHost(snackbarHostState) },
             topBar = {
                 TopAppBar(
                     expandedHeight = 64.dp,
@@ -1180,7 +1161,7 @@ fun ChatContent(
                     actions = {
                         if (isDraft) DraftAgentPicker(agentProfile, availableAgents, onSelectAgent)
                         else if (readOnly) UiTextButton(onClick = { stopDialog = true }, enabled = canStopChild) { Text("中止") }
-                        else IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                        else IconButton(onClick = onOpenSession) {
                             Icon(Icons.Default.AccountTree, "会话面板 · 子代理 ${children.size}", Modifier.size(22.dp))
                         }
                     },
@@ -1240,7 +1221,7 @@ fun ChatContent(
                                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                                     UiTextButton(onClick = { if (modelOptions.isEmpty()) onConfigureModel() else modelMenuExpanded = true },
                                         enabled = !streaming && !historyBusy) {
-                                        Text(currentModel.ifBlank { "配置模型" }, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        Text(currentModel.ifBlank { "未选择模型" }, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.weight(1f, false), fontSize = 12.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         Icon(Icons.Default.ExpandMore, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1255,9 +1236,9 @@ fun ChatContent(
                                         keyboardController?.hide()
                                         onSendMessage(input)
                                     }
-                                }, enabled = streaming || (!historyBusy && !importing && (input.isNotBlank() || attachments.isNotEmpty())),
+                                }, enabled = streaming || (currentModel.isNotBlank() && !historyBusy && !importing && (input.isNotBlank() || attachments.isNotEmpty())),
                                     modifier = Modifier.size(48.dp)) {
-                                    val canSend = streaming || (!historyBusy && !importing && (input.isNotBlank() || attachments.isNotEmpty()))
+                                    val canSend = streaming || (currentModel.isNotBlank() && !historyBusy && !importing && (input.isNotBlank() || attachments.isNotEmpty()))
                                     val sendColor by androidx.compose.animation.animateColorAsState(
                                         MaterialTheme.colorScheme.primary.copy(alpha = if (canSend) 1f else .35f), label = "send availability")
                                     Box(Modifier.size(40.dp).background(sendColor, androidx.compose.foundation.shape.CircleShape),
@@ -1373,7 +1354,10 @@ private suspend fun androidx.compose.foundation.lazy.LazyListState.scrollToChatB
     }
     lastItem?.let { item ->
         val distance = (item.offset + item.size - layoutInfo.viewportEndOffset).coerceAtLeast(0)
-        if (distance > 0) scrollBy(distance.toFloat())
+        if (distance > 0) animateScrollBy(
+            distance.toFloat(),
+            androidx.compose.animation.core.tween(100, easing = androidx.compose.animation.core.LinearEasing)
+        )
     }
 }
 

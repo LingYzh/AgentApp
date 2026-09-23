@@ -1,5 +1,7 @@
 package com.example.myapplication.ui.settings
 
+import com.example.myapplication.ui.components.inertWhen
+
 import com.example.myapplication.ui.components.UiScaffold
 import android.Manifest
 import android.os.Build
@@ -356,9 +358,10 @@ fun SettingsContent(
 
     val subProvider = providers.firstOrNull { it.id == subagentProviderId }
     val selectedSubagentLabel = subProvider?.let { provider ->
-        subagentModel ?: provider.name.ifBlank { provider.model }
+        subagentModel ?: provider.name.ifBlank { provider.type.label }
     } ?: "继承主代理"
 
+    val pageState = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     UiScaffold(
         topBar = {
             TopAppBar(
@@ -399,40 +402,46 @@ fun SettingsContent(
             )
         }
     ) { padding ->
-        when (page) {
-            SettingsPage.MAIN -> SettingsMainPage(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                themeMode = themeMode,
-                onThemeModeChange = onThemeModeChange,
-                maxLoops = maxLoops,
-                loopsSliderValue = loopsSliderValue,
-                onLoopsSliderChange = { loopsSliderValue = it },
-                onLoopsSliderFinished = { onMaxLoopsChange(loopsSliderValue.roundToInt()) },
-                selectedSubagentLabel = selectedSubagentLabel,
-                onOpenSubagentPicker = { showSubagentPicker = true },
-                onOpenCommands = { page = SettingsPage.COMMANDS },
-                autoApprovedCommandCount = autoApprovedCommands.size,
-                storageAccessGranted = storageAccessGranted,
-                onRequestStorageAccess = onRequestStorageAccess,
-                onOpenBackup = { page = SettingsPage.BACKUP }
-            )
-            SettingsPage.BACKUP -> BackupPage(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                busy = busy,
-                status = status,
-                onExport = onExport,
-                onImport = onImport,
-                onOpenSection = onOpenSection
-            )
-            SettingsPage.COMMANDS -> AutoApprovedCommandsPage(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                commands = autoApprovedCommands,
-                isLowRiskCommand = isLowRiskCommand,
-                onAddCommand = onAddAutoApprovedCommand,
-                onRemoveCommand = onRemoveAutoApprovedCommand,
-                showAddCommand = showAddCommand,
-                onShowAddCommandChange = { showAddCommand = it }
-            )
+        androidx.compose.animation.AnimatedContent(page, label = "settings page", modifier = Modifier.fillMaxSize()) { targetPage ->
+            pageState.SaveableStateProvider(targetPage.name) {
+                Box(Modifier.fillMaxSize().inertWhen(targetPage != page)) {
+                    when (targetPage) {
+                        SettingsPage.MAIN -> SettingsMainPage(
+                            modifier = Modifier.fillMaxSize().padding(padding),
+                            themeMode = themeMode,
+                            onThemeModeChange = onThemeModeChange,
+                            maxLoops = maxLoops,
+                            loopsSliderValue = loopsSliderValue,
+                            onLoopsSliderChange = { loopsSliderValue = it },
+                            onLoopsSliderFinished = { onMaxLoopsChange(loopsSliderValue.roundToInt()) },
+                            selectedSubagentLabel = selectedSubagentLabel,
+                            onOpenSubagentPicker = { showSubagentPicker = true },
+                            onOpenCommands = { page = SettingsPage.COMMANDS },
+                            autoApprovedCommandCount = autoApprovedCommands.size,
+                            storageAccessGranted = storageAccessGranted,
+                            onRequestStorageAccess = onRequestStorageAccess,
+                            onOpenBackup = { page = SettingsPage.BACKUP }
+                        )
+                        SettingsPage.BACKUP -> BackupPage(
+                            modifier = Modifier.fillMaxSize().padding(padding),
+                            busy = busy,
+                            status = status,
+                            onExport = onExport,
+                            onImport = onImport,
+                            onOpenSection = onOpenSection
+                        )
+                        SettingsPage.COMMANDS -> AutoApprovedCommandsPage(
+                            modifier = Modifier.fillMaxSize().padding(padding),
+                            commands = autoApprovedCommands,
+                            isLowRiskCommand = isLowRiskCommand,
+                            onAddCommand = onAddAutoApprovedCommand,
+                            onRemoveCommand = onRemoveAutoApprovedCommand,
+                            showAddCommand = showAddCommand,
+                            onShowAddCommandChange = { showAddCommand = it }
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -462,30 +471,19 @@ fun SettingsContent(
                     }
                 )
                 providers.forEach { provider ->
-                    val models = provider.models.ifEmpty {
-                        listOf(provider.model).filter { it.isNotBlank() }
-                    }
+                    val models = provider.models.filter { it.isNotBlank() }.distinct()
                     Text(
-                        provider.name.ifBlank { provider.model },
+                        provider.name.ifBlank { provider.type.label },
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 18.dp, bottom = 4.dp)
                     )
-                    if (models.isEmpty()) {
-                        SubagentModelOption(
-                            title = provider.name.ifBlank { provider.model },
-                            subtitle = "使用此 Provider 的默认模型",
-                            selected = subagentProviderId == provider.id && subagentModel == null,
-                            onClick = {
-                                onSubagentModelChange(provider.id, provider.model.ifBlank { null })
-                                showSubagentPicker = false
-                            }
-                        )
-                    }
+                    if (models.isEmpty()) Text("尚未添加模型，请先到供应商设置中添加。",
+                        style = MaterialTheme.typography.bodySmall)
                     models.forEach { model ->
                         SubagentModelOption(
                             title = model,
-                            subtitle = provider.name.ifBlank { provider.model },
+                            subtitle = provider.name.ifBlank { provider.type.label },
                             selected = subagentProviderId == provider.id && subagentModel == model,
                             onClick = {
                                 onSubagentModelChange(provider.id, model)
@@ -496,7 +494,7 @@ fun SettingsContent(
                 }
                 if (providers.isEmpty()) {
                     Text(
-                        "还没有模型配置，请先在模型配置页添加 Provider。",
+                        "还没有模型配置，请先在模型供应商设置页添加 Provider。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 24.dp)
@@ -789,7 +787,7 @@ private fun BackupPage(
         SettingsSectionTitle("独立迁移")
         BackupMigrationRow(
             icon = Icons.Filled.AccountTree,
-            title = "模型配置",
+            title = "模型供应商设置",
             description = "可选包含 API Key 与附加请求头",
             onClick = { onOpenSection("providers") }
         )

@@ -15,12 +15,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.Card
@@ -55,6 +59,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.myapplication.ui.theme.AgentTheme
 import com.example.myapplication.ui.theme.ExpressiveTokens
 import androidx.lifecycle.ViewModel
@@ -69,6 +74,11 @@ import com.example.myapplication.data.model.MemoryEntry
 import com.example.myapplication.ui.components.ListSelectionBar
 import com.example.myapplication.ui.components.rememberListSelection
 import com.example.myapplication.ui.components.ListPageHeader
+import com.example.myapplication.ui.components.ListOperationsMenu
+import com.example.myapplication.ui.components.PrototypeListAction
+import com.example.myapplication.ui.components.PrototypeListIcon
+import com.example.myapplication.ui.components.PrototypeListOverflowMenu
+import com.example.myapplication.ui.components.PrototypeListRow
 import com.example.myapplication.ui.components.TopFeedbackHost
 import com.example.myapplication.ui.transfer.ConfigurationTransferHost
 import kotlinx.coroutines.CancellationException
@@ -191,6 +201,7 @@ fun MemoryScreen(openDrawer: () -> Unit) {
             onDeleteMemory = { id -> vm.delete(id) },
             onDeleteSelected = { ids -> vm.deleteSelected(ids) },
             onImport = actions.onImport,
+            onExportAll = actions.onExportAll,
             onExportSelected = actions.onExportSelected,
             busy = actions.busy || busy,
             snackbarHostState = snackbar
@@ -211,13 +222,13 @@ fun MemoryContent(
     onDeleteMemory: (String) -> Unit,
     onDeleteSelected: (Set<String>) -> Unit = { ids -> ids.forEach(onDeleteMemory) },
     onImport: () -> Unit = {},
+    onExportAll: () -> Unit = {},
     onExportSelected: (Set<String>) -> Unit = {},
     busy: Boolean = false,
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() }
 ) {
     var editTarget by remember { mutableStateOf<Pair<String?, Boolean>?>(null) } // (id?, open)
     var query by rememberSaveable { mutableStateOf("") }
-    val selection = rememberListSelection(memories.map { it.id }, memories.associate { it.id to it.title })
     val normalizedQuery = query.trim()
     val filteredMemories = remember(memories, normalizedQuery, memoryContentProvider) {
         memories.filter { entry ->
@@ -225,6 +236,8 @@ fun MemoryContent(
                 .any { it.contains(normalizedQuery, ignoreCase = true) }
         }
     }
+    val selection = rememberListSelection(memories.map { it.id },
+        memories.associate { it.id to it.title }, filteredMemories.map { it.id })
 
     UiScaffold(
         snackbarHost = { TopFeedbackHost(snackbarHostState) },
@@ -240,14 +253,7 @@ fun MemoryContent(
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                 ),
                 actions = {
-                    UiTextButton(
-                        onClick = {
-                            if (selection.active) selection.onExit() else selection.onEnter()
-                        },
-                        enabled = !busy
-                    ) {
-                        Text(if (selection.active) "完成" else "管理")
-                    }
+                    ListOperationsMenu(selection, busy, onImport, onExportAll)
                 }
             )
         },
@@ -257,7 +263,6 @@ fun MemoryContent(
                     selection = selection,
                     busy = busy,
                     onDelete = onDeleteSelected,
-                    onImport = onImport,
                     onExport = onExportSelected
                 )
             }
@@ -271,7 +276,7 @@ fun MemoryContent(
                 end = ExpressiveTokens.ScreenHorizontalPadding,
                 bottom = if (selection.active) 16.dp else 24.dp
             ),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             item(key = "page-header") {
                 ListPageHeader(
@@ -295,8 +300,10 @@ fun MemoryContent(
                     )
                 }
             } else {
-                items(filteredMemories, key = { it.id }) { entry ->
+                itemsIndexed(filteredMemories, key = { _, entry -> entry.id }) { index, entry ->
                     MemoryItem(
+                        modifier = Modifier.animateItem(),
+                        busy = busy,
                         entry = entry,
                         content = memoryContentProvider(entry.id),
                         selectionMode = selection.active,
@@ -308,7 +315,8 @@ fun MemoryContent(
                             }
                         },
                         onToggle = { if (!busy) selection.onToggle(entry.id) },
-                        onDelete = { onDeleteMemory(entry.id) }
+                        onDelete = { onDeleteMemory(entry.id) },
+                        showDivider = index < filteredMemories.lastIndex
                     )
                 }
             }
@@ -370,57 +378,64 @@ fun MemoryContent(
 fun MemoryItem(
     entry: MemoryEntry,
     content: String,
+    modifier: Modifier = Modifier,
+    busy: Boolean = false,
     onClick: () -> Unit,
     onDelete: () -> Unit,
     selectionMode: Boolean = false,
     selected: Boolean = false,
-    onToggle: () -> Unit = {}
+    onToggle: () -> Unit = {},
+    showDivider: Boolean = true
 ) {
-    Card(
-        shape = ExpressiveTokens.CardShape,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (selectionMode) {
+    PrototypeListRow(
+        title = entry.title,
+        description = content.take(80),
+        modifier = modifier,
+        leadingContent = if (selectionMode) {
+            {
                 Checkbox(
                     checked = selected,
-                    onCheckedChange = { onToggle() }
-                )
-                Spacer(Modifier.width(8.dp))
-            }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    entry.title, style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    content.take(80),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
-                        .format(Date(entry.updatedAt)),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    onCheckedChange = { onToggle() },
+                    enabled = !busy
                 )
             }
+        } else {
+            { PrototypeListIcon(Icons.Filled.Lightbulb, "记忆") }
+        },
+        metadataContent = {
+            Text(
+                SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(entry.updatedAt)),
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
+        trailingContent = {
             if (!selectionMode) {
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Filled.Delete, "删除")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    PrototypeListOverflowMenu(
+                        contentDescription = "记忆操作",
+                        actions = listOf(
+                            PrototypeListAction(
+                                "删除",
+                                Icons.Filled.Delete,
+                                destructive = true,
+                                onClick = onDelete
+                            )
+                        ),
+                        enabled = !busy
+                    )
+                    Icon(
+                        imageVector = Icons.Filled.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
             }
-        }
-    }
+        },
+        showDivider = showDivider,
+        onClick = { if (!busy) onClick() }
+    )
 }
 
 @Preview(showBackground = true, name = "Memory - Light")

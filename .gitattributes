@@ -1,0 +1,5 @@
+# Preserve upstream vendored bundles and licenses without whitespace rewrites.
+app/src/main/assets/markdown/mermaid.min.js -whitespace
+app/src/main/assets/markdown/mermaid.min.js.LEGAL.txt -whitespace
+# Two trailing spaces intentionally exercise Markdown hard line breaks.
+.Codex/test-fixtures/markdown-complete-samples.md whitespace=-blank-at-eol

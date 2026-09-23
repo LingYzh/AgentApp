@@ -60,7 +60,7 @@ internal fun ModelPicker(options: List<Pair<ProviderConfig, String>>, onSelect: 
                 }
             }
             com.example.myapplication.ui.components.UiTextButton(onClick = { onDismiss(); onManage() }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Tune, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("管理模型配置")
+                Icon(Icons.Default.Tune, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("模型供应商设置")
             }
         }
     }

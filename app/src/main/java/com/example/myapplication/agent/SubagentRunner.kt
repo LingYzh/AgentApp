@@ -39,17 +39,21 @@ class SubagentRunner(
             // 1. 用户在设置中强制指定
             appConfig.subagentProviderId != null -> {
                 val p = appConfig.providers.firstOrNull { it.id == appConfig.subagentProviderId }
-                p?.copy(model = appConfig.subagentModel ?: p.model) ?: inherited
+                requireNotNull(p) { "子代理供应商已不可用，请重新选择" }
+                p.copy(model = requireNotNull(appConfig.subagentModel?.takeIf { it.isNotBlank() }) {
+                    "请先为子代理选择模型"
+                })
             }
             // 2. 主代理在工具参数中指定
             providerName != null || model != null -> {
                 val base = providerName?.let { name ->
                     appConfig.providers.firstOrNull {
-                        it.name.equals(name, ignoreCase = true) ||
-                            it.model.equals(name, ignoreCase = true)
+                        it.name.equals(name, ignoreCase = true) || it.id == name
                     }
                 } ?: inherited
-                base.copy(model = model ?: base.model)
+                base.copy(model = model?.takeIf { it.isNotBlank() }
+                    ?: inherited.model.takeIf { base.id == inherited.id }
+                    ?: error("指定其他供应商时必须同时指定子代理模型"))
             }
             // 3. 兜底：继承主代理
             else -> inherited

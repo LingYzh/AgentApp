@@ -55,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -73,6 +74,10 @@ import com.example.myapplication.data.model.ChatMessage
 import com.example.myapplication.data.model.Conversation
 import com.example.myapplication.ui.components.ListSelectionBar
 import com.example.myapplication.ui.components.ListPageHeader
+import com.example.myapplication.ui.components.ListOperationsMenu
+import com.example.myapplication.ui.components.PrototypeListAction
+import com.example.myapplication.ui.components.PrototypeListOverflowMenu
+import com.example.myapplication.ui.components.PrototypeListRow
 import com.example.myapplication.ui.components.TopFeedbackHost
 import com.example.myapplication.ui.components.rememberListSelection
 import com.example.myapplication.ui.theme.AgentTheme
@@ -184,8 +189,6 @@ class ConversationsViewModel(
         _message.value = null
     }
 
-    fun agentLabel(agentId: String?): String? =
-        agentId?.let { id -> _agents.value.firstOrNull { it.id == id }?.let { "${it.emoji} ${it.name}" } }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -231,7 +234,6 @@ fun ConversationsScreen(navController: NavHostController, openDrawer: () -> Unit
         ConversationsContent(
             conversations = list,
             agents = agents,
-            agentLabel = { vm.agentLabel(it) },
             onOpenDrawer = openDrawer,
             onSelectConversation = { navController.showHomeChat(conversationId = it) },
             onCreateConversation = { agentId ->
@@ -241,6 +243,7 @@ fun ConversationsScreen(navController: NavHostController, openDrawer: () -> Unit
             onDeleteConversation = { vm.delete(it) },
             onDeleteSelected = { vm.deleteSelected(it) },
             onImport = actions.onImport,
+            onExportAll = actions.onExportAll,
             onExportSelected = actions.onExportSelected,
             busy = actions.busy || busy,
             snackbarHostState = snackbar
@@ -256,7 +259,6 @@ fun ConversationsScreen(navController: NavHostController, openDrawer: () -> Unit
 fun ConversationsContent(
     conversations: List<Conversation>,
     agents: List<AgentProfile>,
-    agentLabel: (String?) -> String?,
     onOpenDrawer: () -> Unit,
     onSelectConversation: (String) -> Unit,
     onCreateConversation: (String?) -> Unit,
@@ -264,6 +266,7 @@ fun ConversationsContent(
     onDeleteConversation: (String) -> Unit,
     onDeleteSelected: (Set<String>) -> Unit = { ids -> ids.forEach(onDeleteConversation) },
     onImport: () -> Unit = {},
+    onExportAll: () -> Unit = {},
     onExportSelected: (Set<String>) -> Unit = {},
     busy: Boolean = false,
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() }
@@ -272,7 +275,6 @@ fun ConversationsContent(
     var deleteTarget by remember { mutableStateOf<Conversation?>(null) }
     var showAgentPicker by remember { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
-    val selection = rememberListSelection(conversations.map { it.id }, conversations.associate { it.id to it.title })
     val normalizedQuery = query.trim()
     val dayStart = java.util.Calendar.getInstance().apply {
         set(java.util.Calendar.HOUR_OF_DAY, 0)
@@ -292,16 +294,18 @@ fun ConversationsContent(
             normalizedQuery.isBlank() || listOfNotNull(
                 conversation.title,
                 conversation.messages.lastOrNull()?.content,
-                agentLabel(conversation.agentId)
+                agents.firstOrNull { it.id == conversation.agentId }?.name
             ).any { it.contains(normalizedQuery, ignoreCase = true) }
         }
     }
+    val selection = rememberListSelection(conversations.map { it.id },
+        conversations.associate { it.id to it.title }, filteredConversations.map { it.id })
 
     UiScaffold(
         snackbarHost = { TopFeedbackHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("对话") },
+                title = { Text(if (selection.active) "管理会话" else "对话") },
                 navigationIcon = {
                     IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "菜单") }
                 },
@@ -311,14 +315,7 @@ fun ConversationsContent(
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                 ),
                 actions = {
-                    UiTextButton(
-                        onClick = {
-                            if (selection.active) selection.onExit() else selection.onEnter()
-                        },
-                        enabled = !busy
-                    ) {
-                        Text(if (selection.active) "完成" else "管理")
-                    }
+                    ListOperationsMenu(selection, busy, onImport, onExportAll)
                 }
             )
         },
@@ -328,7 +325,6 @@ fun ConversationsContent(
                     selection = selection,
                     busy = busy,
                     onDelete = onDeleteSelected,
-                    onImport = onImport,
                     onExport = onExportSelected,
                     deleteNotice = "所属子代理记录会一起删除；工作区文件保留。"
                 )
@@ -384,13 +380,21 @@ fun ConversationsContent(
                 itemsIndexed(filteredConversations, key = { _, conv -> conv.id }) { index, conv ->
                     val group = dateGroup(conv)
                     if (index == 0 || dateGroup(filteredConversations[index - 1]) != group) {
-                        Text(group, Modifier.padding(top = 20.dp, bottom = 10.dp),
-                            style = MaterialTheme.typography.labelMedium,
+                        Text(
+                            group,
+                            Modifier.padding(start = 2.dp, top = 23.dp, bottom = 11.dp),
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontSize = 11.sp,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.W600,
+                                letterSpacing = 0.7.sp
+                            ),
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     ConversationItem(
                         conv = conv,
-                        agentLabel = agentLabel(conv.agentId),
+                        agent = agents.firstOrNull { it.id == conv.agentId },
+                        modifier = Modifier.animateItem(),
+                        busy = busy,
                         selectionMode = selection.active,
                         selected = conv.id in selection.selectedIds,
                         onClick = {
@@ -401,7 +405,8 @@ fun ConversationsContent(
                         },
                         onToggle = { if (!busy) selection.onToggle(conv.id) },
                         onRename = { renameTarget = conv },
-                        onDelete = { deleteTarget = conv }
+                        onDelete = { deleteTarget = conv },
+                        showDivider = index < filteredConversations.lastIndex
                     )
                 }
             }
@@ -522,88 +527,56 @@ private fun AgentPickRow(
 @Composable
 private fun ConversationItem(
     conv: Conversation,
-    agentLabel: String?,
+    agent: AgentProfile?,
+    modifier: Modifier = Modifier,
+    busy: Boolean = false,
     onClick: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
     selectionMode: Boolean = false,
     selected: Boolean = false,
-    onToggle: () -> Unit = {}
+    onToggle: () -> Unit = {},
+    showDivider: Boolean = true
 ) {
-    var menuExpanded by remember(conv.id) { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth()) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(horizontal = 4.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (selectionMode) {
+    val preview = conv.messages.lastOrNull()?.content?.take(60) ?: "(空对话)"
+    PrototypeListRow(
+        title = conv.title,
+        description = listOfNotNull(agent?.name, preview).joinToString(" · "),
+        modifier = modifier,
+        leadingContent = if (selectionMode) {
+            {
                 Checkbox(
                     checked = selected,
-                    onCheckedChange = { onToggle() }
+                    onCheckedChange = { onToggle() },
+                    enabled = !busy
                 )
-                Spacer(Modifier.width(8.dp))
             }
-            Column(Modifier.weight(1f)) {
+        } else {
+            null
+        },
+        trailingContent = {
+            if (!selectionMode) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        conv.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
+                    PrototypeListOverflowMenu(
+                        contentDescription = "会话操作",
+                        actions = listOf(
+                            PrototypeListAction("重命名", Icons.Filled.Edit, onClick = onRename),
+                            PrototypeListAction("删除", Icons.Filled.Delete, destructive = true, onClick = onDelete)
+                        ),
+                        enabled = !busy
+                    )
+                    Icon(
+                        imageVector = Icons.Filled.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
-                val preview = conv.messages.lastOrNull()?.content?.take(60) ?: "(空对话)"
-                Text(
-                    listOfNotNull(agentLabel, preview).joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                val time = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
-                    .format(Date(conv.messages.lastOrNull()?.timestamp ?: conv.createdAt))
-                Text(
-                    time,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
-            if (!selectionMode) {
-                androidx.compose.foundation.layout.Box {
-                    IconButton(onClick = { menuExpanded = true }) {
-                        Icon(Icons.Filled.MoreVert, "更多操作")
-                    }
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("重命名") },
-                            onClick = {
-                                menuExpanded = false
-                                onRename()
-                            },
-                            leadingIcon = { Icon(Icons.Filled.Edit, null) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("删除") },
-                            onClick = {
-                                menuExpanded = false
-                                onDelete()
-                            },
-                            leadingIcon = { Icon(Icons.Filled.Delete, null) }
-                        )
-                    }
-                }
-                Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-    }
+        },
+        showDivider = showDivider,
+        onClick = { if (!busy) onClick() }
+    )
 }
 
 @Preview(showBackground = true, name = "Conversations - Light")
@@ -638,7 +611,6 @@ private fun ConversationsPreviewLight() {
         ConversationsContent(
             conversations = dummyConversations,
             agents = dummyAgents,
-            agentLabel = { id -> dummyAgents.firstOrNull { it.id == id }?.let { "${it.emoji} ${it.name}" } },
             onOpenDrawer = {},
             onSelectConversation = {},
             onCreateConversation = {},
@@ -669,7 +641,6 @@ private fun ConversationsPreviewDark() {
         ConversationsContent(
             conversations = dummyConversations,
             agents = dummyAgents,
-            agentLabel = { "${dummyAgents[0].emoji} ${dummyAgents[0].name}" },
             onOpenDrawer = {},
             onSelectConversation = {},
             onCreateConversation = {},
@@ -686,7 +657,6 @@ private fun ConversationsEmptyPreview() {
         ConversationsContent(
             conversations = emptyList(),
             agents = emptyList(),
-            agentLabel = { null },
             onOpenDrawer = {},
             onSelectConversation = {},
             onCreateConversation = {},
@@ -711,7 +681,7 @@ private fun ConversationItemPreview() {
     AgentTheme(themeMode = "light") {
         ConversationItem(
             conv = conv,
-            agentLabel = "🐱 专属女仆",
+            agent = AgentProfile(id = "preview", name = "专属女仆", emoji = "🐱"),
             onClick = {},
             onRename = {},
             onDelete = {}

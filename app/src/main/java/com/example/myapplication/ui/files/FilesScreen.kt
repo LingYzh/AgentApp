@@ -17,8 +17,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileOpen
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
@@ -46,6 +49,11 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import com.example.myapplication.ui.components.UiTextButton
 import com.example.myapplication.ui.components.ListPageHeader
+import com.example.myapplication.ui.components.ListOperationsMenu
+import com.example.myapplication.ui.components.PrototypeListAction
+import com.example.myapplication.ui.components.PrototypeListIcon
+import com.example.myapplication.ui.components.PrototypeListOverflowMenu
+import com.example.myapplication.ui.components.PrototypeListRow
 import com.example.myapplication.ui.components.TopFeedbackHost
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -308,13 +316,14 @@ fun FilesContent(
     busy: Boolean = false
 ) {
     var query by rememberSaveable { mutableStateOf("") }
-    val selection = rememberListSelection(files.map { it.first })
     val normalizedQuery = query.trim()
     val filteredFiles = remember(files, normalizedQuery) {
         files.filter { (path, _) ->
             normalizedQuery.isBlank() || path.contains(normalizedQuery, ignoreCase = true)
         }
     }
+    val selection = rememberListSelection(files.map { it.first },
+        visibleIds = filteredFiles.map { it.first })
     UiScaffold(
         snackbarHost = { TopFeedbackHost(snackbarHostState) },
         topBar = {
@@ -332,12 +341,7 @@ fun FilesContent(
                     }
                 },
                 actions = {
-                    UiTextButton(
-                        onClick = if (selection.active) selection.onExit else selection.onEnter,
-                        enabled = !busy
-                    ) {
-                        Text(if (selection.active) "完成" else "管理")
-                    }
+                    ListOperationsMenu(selection, busy, onUpload, selection.onEnter)
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -352,7 +356,6 @@ fun FilesContent(
                     selection = selection,
                     busy = busy,
                     onDelete = onDeleteSelected,
-                    onImport = onUpload,
                     onExport = onExportSelected
                 )
             }
@@ -366,7 +369,7 @@ fun FilesContent(
                 end = ExpressiveTokens.ScreenHorizontalPadding,
                 bottom = if (selection.active) 16.dp else 24.dp
             ),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             item(key = "page-header") {
                 ListPageHeader(
@@ -390,49 +393,64 @@ fun FilesContent(
                     )
                 }
             } else {
-                items(filteredFiles, key = { it.first }) { (path, size) ->
-                    Card(
-                        shape = ExpressiveTokens.CardShape,
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface
-                        ),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        onClick = {
-                            if (!busy) {
-                                if (selection.active) selection.onToggle(path) else onSelectFile(path)
-                            }
-                        },
-                        modifier = Modifier.animateItem().fillMaxWidth()
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (selection.active) {
+                itemsIndexed(filteredFiles, key = { _, file -> file.first }) { index, (path, size) ->
+                    val normalizedPath = path.replace('\\', '/')
+                    val fileName = normalizedPath.substringAfterLast('/')
+                    val extension = fileName.substringAfterLast('.', "").lowercase()
+                    val fileType = when (extension) {
+                        "md", "markdown" -> "Markdown"
+                        "txt" -> "文本"
+                        "json" -> "JSON"
+                        "kt" -> "Kotlin"
+                        "java" -> "Java"
+                        "png", "jpg", "jpeg", "webp" -> "图片"
+                        else -> extension.uppercase().ifBlank { "文件" }
+                    }
+                    val parentPath = normalizedPath.substringBeforeLast('/', "")
+                    val description = listOfNotNull(fileType, formatSize(size), parentPath.takeIf { it.isNotBlank() })
+                        .joinToString(" · ")
+                    PrototypeListRow(
+                        title = fileName,
+                        description = description,
+                        modifier = Modifier.animateItem(),
+                        leadingContent = if (selection.active) {
+                            {
                                 Checkbox(
                                     checked = path in selection.selectedIds,
                                     onCheckedChange = { selection.onToggle(path) },
                                     enabled = !busy
                                 )
                             }
-                            Icon(
-                                Icons.Filled.FileOpen, null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                                Text(path, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    formatSize(size), style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                        } else {
+                            { PrototypeListIcon(Icons.Filled.FileOpen, "文件") }
+                        },
+                        trailingContent = {
                             if (!selection.active) {
-                                IconButton(onClick = { onDeleteFile(path) }, enabled = !busy) {
-                                    Icon(Icons.Filled.Delete, "删除")
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    PrototypeListOverflowMenu(
+                                        contentDescription = "文件操作",
+                                        actions = listOf(
+                                            PrototypeListAction("删除", Icons.Filled.Delete,
+                                                destructive = true, onClick = { onDeleteFile(path) })
+                                        ),
+                                        enabled = !busy
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Filled.ChevronRight,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
                                 }
                             }
+                        },
+                        showDivider = index < filteredFiles.lastIndex,
+                        onClick = {
+                            if (!busy) {
+                                if (selection.active) selection.onToggle(path) else onSelectFile(path)
+                            }
                         }
-                    }
+                    )
                 }
             }
         }
