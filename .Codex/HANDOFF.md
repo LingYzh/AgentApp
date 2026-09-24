@@ -1,5 +1,7 @@
 # 最新交付：2026-09-25 本机设备控制
 
+- 已提交功能 `292f767`，并出 release 试装包 `build/releases/UAH-1.0-292f767-release.apk`。release 构建不可调试、排除 debug 测试页面，沿用本机测试证书保持覆盖兼容；未建立独立正式发布密钥。构建与 release lint 通过，详见 [release 记录](memory/2026-09-25-release-package.md)。
+
 - 最新追加：修复设备工具记录展开时超长单行 JSON 导致 Compose Constraints 越界闪退，纯合成数据先复现后通过回归；原始复制内容保持完整。仅阅读实机日志元数据/堆栈，未读正文。设备控制/搜索服务统一卡片栏目，连接状态就近展示，模型测试结果移至测试按钮下。详见 [记录](memory/2026-09-25-tool-record-crash-and-settings.md)。
 
 - 追加：实机已补装 Shizuku 13.6.0；网络搜索服务、设备控制入口合并到“设置 → 搜索与设备”，子页返回设置。设备控制新增官方下载入口。最新 UAH 覆盖安装保留数据成功；构建/lint 与模拟器导航检查通过。最新 APK SHA256 `B889A7E41373E4F4CE5504291C86428F5B61B8FD04051471B8FEBD54E6EAC9DA`，下方 APK 及入口说明为前一版记录。
