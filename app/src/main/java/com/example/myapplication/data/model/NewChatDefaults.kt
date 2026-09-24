@@ -56,6 +56,6 @@ fun ReasoningSupport.defaultEffort(): ReasoningEffort? =
     ReasoningEffort.MEDIUM.takeIf { it in efforts } ?: efforts.getOrNull(efforts.size / 2)
 
 fun ProviderConfig.sessionEffort(preferred: ReasoningEffort?): ReasoningEffort? {
-    val support = reasoningSupportFor(type, model)
+    val support = reasoningSupportForModel()
     return preferred?.takeIf { it in support.efforts } ?: support.defaultEffort()
 }

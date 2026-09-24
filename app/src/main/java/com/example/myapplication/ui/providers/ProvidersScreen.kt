@@ -2,6 +2,10 @@ package com.example.myapplication.ui.providers
 
 import com.example.myapplication.ui.components.UiScaffold
 import com.example.myapplication.ui.components.PrototypeTextField
+import com.example.myapplication.data.model.ModelMetadata
+import androidx.compose.foundation.text.selection.SelectionContainer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import androidx.compose.foundation.layout.Arrangement
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -217,6 +221,8 @@ class ProvidersViewModel(val app: AgentApp) : ViewModel() {
     val fetchedModels = _fetchedModels.asStateFlow()
     private val _fetchedCapabilities = MutableStateFlow<Map<String, ModelCapabilities>?>(null)
     val fetchedCapabilities = _fetchedCapabilities.asStateFlow()
+    private val _fetchedMetadata = MutableStateFlow<Map<String, ModelMetadata>?>(null)
+    val fetchedMetadata = _fetchedMetadata.asStateFlow()
     private val _fetchedScope = MutableStateFlow<String?>(null)
     val fetchedScope = _fetchedScope.asStateFlow()
     private val _fetchError = MutableStateFlow<String?>(null)
@@ -233,6 +239,7 @@ class ProvidersViewModel(val app: AgentApp) : ViewModel() {
                 val catalog = app.modelFetcher.fetchModelCatalog(provider)
                 _fetchedModels.value = catalog.models
                 _fetchedCapabilities.value = catalog.discoveredCapabilities
+                _fetchedMetadata.value = catalog.discoveredModelMetadata
                 _fetchedScope.value = scope
                 if (catalog.models.isEmpty()) _fetchError.value = "接口返回为空"
             } catch (error: CancellationException) {
@@ -425,6 +432,7 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
     val fetchingModels by vm.fetchingModels.collectAsStateWithLifecycle()
     val fetchedModels by vm.fetchedModels.collectAsStateWithLifecycle()
     val fetchedCapabilities by vm.fetchedCapabilities.collectAsStateWithLifecycle()
+    val fetchedMetadata by vm.fetchedMetadata.collectAsStateWithLifecycle()
     val fetchedScope by vm.fetchedScope.collectAsStateWithLifecycle()
     val fetchError by vm.fetchError.collectAsStateWithLifecycle()
     val coroutineScope = rememberCoroutineScope()
@@ -444,6 +452,7 @@ fun ProviderEditScreen(navController: NavHostController, providerId: String) {
         fetchingModels = fetchingModels,
         fetchedModels = fetchedModels,
         fetchedCapabilities = fetchedCapabilities,
+        fetchedMetadata = fetchedMetadata,
         fetchedScope = fetchedScope,
         fetchError = fetchError,
         onBack = { navController.safePopBackStack() },
@@ -490,7 +499,8 @@ fun ProviderEditContent(
     onTest: (ProviderConfig) -> Unit,
     onFetchModels: (ProviderConfig) -> Unit,
     saving: Boolean = false,
-    saveError: String? = null
+    saveError: String? = null,
+    fetchedMetadata: Map<String, ModelMetadata>? = null
 ) {
     var name by remember { mutableStateOf(initialConfig?.name ?: "") }
     var type by remember { mutableStateOf(initialConfig?.type ?: ProviderType.OPENAI) }
@@ -547,6 +557,11 @@ fun ProviderEditContent(
         currentScope == initialScope -> initialConfig?.discoveredCapabilities.orEmpty()
         else -> emptyMap()
     }
+    val discoveredMetadata = when {
+        fetchedModels != null && fetchedMatchesScope -> fetchedMetadata.orEmpty()
+        currentScope == initialScope -> initialConfig?.discoveredModelMetadata.orEmpty()
+        else -> emptyMap()
+    }
     var manualModelName by rememberSaveable { mutableStateOf("") }
     var addedModels by remember { mutableStateOf(emptyList<String>()) }
     val currentModelId = model.trim()
@@ -594,6 +609,7 @@ fun ProviderEditContent(
             .toMap(),
         models = visibleModelIds,
         discoveredCapabilities = discoveredCapabilities,
+        discoveredModelMetadata = discoveredMetadata,
         capabilityOverrides = capabilityOverrides,
         contextWindowOverrides = contextWindowOverrides
     )
@@ -829,7 +845,7 @@ fun ProviderEditContent(
                                 modelId = modelId,
                                 override = capabilityOverrides[modelId] != null ||
                                     contextWindowOverrides[modelId] != null,
-                                discovered = discoveredCapabilities.containsKey(modelId),
+                                discovered = discoveredCapabilities.containsKey(modelId) || discoveredMetadata.containsKey(modelId),
                                 onClick = { modelSettingsModel = modelId }
                             )
                         }
@@ -989,6 +1005,7 @@ fun ProviderEditContent(
                                 ?: ModelCapabilities(),
                             hasManualCapabilityOverride = selectedOverride != null,
                             hasDiscoveredCapabilities = discoveredCapabilities.containsKey(targetModel),
+                            metadata = discoveredMetadata[targetModel],
                             contextWindowDraft = contextWindowDrafts[targetModel]
                                 ?: contextWindowOverrides[targetModel]?.toString().orEmpty(),
                             saveError = saveError,
@@ -998,6 +1015,8 @@ fun ProviderEditContent(
                             },
                             onResetCapabilities = {
                                 capabilityOverrides = capabilityOverrides - targetModel
+                                contextWindowOverrides = contextWindowOverrides - targetModel
+                                contextWindowDrafts = contextWindowDrafts - targetModel
                             },
                             onContextWindowChange = { value ->
                                 contextWindowOverrides = if (value == null) {
@@ -1076,12 +1095,13 @@ private fun ProviderModelSettingsContent(
     onCapabilitiesChange: (ModelCapabilities) -> Unit,
     onResetCapabilities: () -> Unit,
     onContextWindowChange: (Int?) -> Unit,
-    onContextWindowDraftChange: (String) -> Unit
+    onContextWindowDraftChange: (String) -> Unit,
+    metadata: ModelMetadata? = null
 ) {
     val parsedContextWindow = contextWindowDraft.trim().toIntOrNull()
     val contextWindowError = when {
         contextWindowDraft.isBlank() || parsedContextWindow != null && parsedContextWindow > 0 -> null
-        else -> "请输入大于 0 的整数，留空表示未知。"
+        else -> "请输入大于 0 的整数，留空使用接口声明。"
     }
 
     Column(
@@ -1116,7 +1136,9 @@ private fun ProviderModelSettingsContent(
             modifier = Modifier.fillMaxWidth(),
             label = { Text("最大上下文 tokens（可选）") },
             supportingText = {
-                Text(contextWindowError ?: "留空表示未知，不估算上下文窗口。")
+                Text(contextWindowError ?: metadata?.contextWindow?.let {
+                    "接口声明：$it tokens；留空使用此值，填写则手动覆盖。"
+                } ?: "留空表示未知，不估算上下文窗口。")
             },
             isError = contextWindowError != null,
             singleLine = true
@@ -1152,11 +1174,6 @@ private fun ProviderModelSettingsContent(
             ) {
                 onCapabilitiesChange(capabilities.copy(video = !capabilities.video))
             }
-            if (hasManualCapabilityOverride) {
-                UiTextButton(onClick = onResetCapabilities) {
-                    Text("恢复接口自动能力")
-                }
-            }
         } else {
             Text(
                 "自定义模板不支持附件读取，请改用 OpenAI 兼容、Anthropic 或 Gemini。",
@@ -1164,7 +1181,44 @@ private fun ProviderModelSettingsContent(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+        if (hasManualCapabilityOverride || contextWindowDraft.isNotEmpty()) {
+            UiTextButton(onClick = onResetCapabilities) {
+                Text("恢复接口能力与上下文长度")
+            }
+        }
+        metadata?.let { ModelDeclaration(it) }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+private val modelDeclarationJson = Json { prettyPrint = true }
+
+@Composable
+private fun ModelDeclaration(metadata: ModelMetadata) {
+    var expanded by remember { mutableStateOf(false) }
+    fun Boolean?.label(): String = when (this) { true -> "支持"; false -> "不支持"; null -> "未声明" }
+    Text("接口能力声明", style = MaterialTheme.typography.titleMedium)
+    val summary = listOf(
+        "上下文容量" to (metadata.contextWindow?.toString() ?: "未声明"),
+        "最大输入 tokens" to (metadata.maxInputTokens?.toString() ?: "未声明"),
+        "最大输出 tokens" to (metadata.maxOutputTokens?.toString() ?: "未声明"),
+        "思考" to metadata.reasoning.label(),
+        "思考档位" to (metadata.reasoningEfforts?.joinToString("、")?.ifEmpty { "无" } ?: "未声明"),
+        "工具调用" to metadata.toolCall.label(),
+        "温度参数" to metadata.temperature.label(),
+        "提示缓存" to metadata.promptCaching.label(),
+        "输入模态" to (metadata.inputModalities?.joinToString("、") ?: "未声明"),
+        "输出模态" to (metadata.outputModalities?.joinToString("、") ?: "未声明")
+    )
+    summary.forEach { (name, value) ->
+        Text("$name：$value", style = MaterialTheme.typography.bodyMedium)
+    }
+    UiTextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起完整声明" else "查看完整声明") }
+    if (expanded) {
+        val raw = remember(metadata.raw) {
+            modelDeclarationJson.encodeToString(JsonObject.serializer(), metadata.raw)
+        }
+        SelectionContainer { Text(raw, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
     }
 }
 

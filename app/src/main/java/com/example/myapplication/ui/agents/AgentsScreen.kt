@@ -788,7 +788,7 @@ fun AgentEditContent(
                         }
                     }
                     Text(
-                        "工具执行还受会话权限限制。主代理具备文件写入能力时，自动提供进入/提交计划工具；空工具列表沿用默认全集。",
+                        "工具执行还受会话权限限制。实时会话状态查询始终可用；主代理具备文件写入能力时自动提供进入/提交计划工具；空工具列表沿用默认全集。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -809,7 +809,7 @@ fun AgentEditContent(
                         Tools.SAVE_SKILL to ("沉淀技能" to "保存并积累新能力"),
                         Tools.RUN_SUBAGENT to ("委派子代理" to "派发独立子任务并行推演")
                     )
-                    Tools.ALL_NAMES.forEach { toolName ->
+                    Tools.ALL_NAMES.filterNot { it == Tools.GET_SESSION_STATE }.forEach { toolName ->
                         val (label, desc) = toolDescriptions[toolName] ?: (toolName to "")
                         val isChecked = toolName in selectedTools
                         Row(

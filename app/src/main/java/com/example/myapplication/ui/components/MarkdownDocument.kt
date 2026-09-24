@@ -405,7 +405,10 @@ internal object MarkdownDocument {
                             end = source.indexOf(closeDelimiter, end + closeDelimiter.length)
                         }
                         if (end > cursor + delimiter.length && '\n' !in source.substring(cursor + delimiter.length, end) &&
-                            (delimiter !in setOf("~", "^") || source.substring(cursor + delimiter.length, end).none { it.isWhitespace() }) &&
+                            // Chat frequently uses paired tildes as punctuation. Only numeric
+                            // shorthand shifts the baseline; arbitrary text uses <sub>/<sup>.
+                            (delimiter !in setOf("~", "^") || source.substring(cursor + delimiter.length, end)
+                                .matches(Regex("[+-]?[0-9]+"))) &&
                             !source[cursor + delimiter.length].isWhitespace() && !source[end - 1].isWhitespace() &&
                             (delimiter != "$" || source.getOrNull(end + 1)?.isDigit() != true)
                         ) {

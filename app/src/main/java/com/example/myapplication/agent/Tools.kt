@@ -25,12 +25,13 @@ object Tools {
     const val RUN_COMMAND = "run_command"
     const val ENTER_PLAN_MODE = "enter_plan_mode"
     const val EXIT_PLAN_MODE = "exit_plan_mode"
+    const val GET_SESSION_STATE = "get_session_state"
 
     val ALL_NAMES = listOf(
         WRITE_FILE, READ_FILE, LIST_FILES,
         SAVE_MEMORY, SEARCH_MEMORY, DELETE_MEMORY,
         USE_SKILL, SAVE_SKILL, RUN_SUBAGENT,
-        EDIT_FILE, DELETE_FILE, RUN_COMMAND, ENTER_PLAN_MODE, EXIT_PLAN_MODE
+        EDIT_FILE, DELETE_FILE, RUN_COMMAND, ENTER_PLAN_MODE, EXIT_PLAN_MODE, GET_SESSION_STATE
     )
 
     /** 子代理可用的默认工具（不含 run_subagent，保证单层） */
@@ -129,13 +130,18 @@ object Tools {
             props("command" to "要执行的 shell 命令", "cwd" to "可选工作目录（默认当前工作目录）", required = listOf("command"))
         ),
         ToolSpec(
+            GET_SESSION_STATE,
+            "只读查询当前会话的实时权限模式、目录范围、计划文件及可用工具。历史消息删除、压缩或权限变更后不应猜测当前权限；有疑问时调用本工具。不会修改或申请权限。",
+            props(required = emptyList())
+        ),
+        ToolSpec(
             ENTER_PLAN_MODE,
             "主代理进入计划模式。任何当前模式均可请求进入；子代理被硬性禁止。进入后只能写入本对话指定的计划文件。",
             props(required = emptyList())
         ),
         ToolSpec(
             EXIT_PLAN_MODE,
-            "主代理提交当前计划文件给用户审批。仅计划模式可用；子代理被硬性禁止。获批后会切换到用户选择的执行模式。",
+            "计划完成后主代理必须调用本工具，提交已保存的非空计划文件并等待用户审批；仅在聊天中展示不算提交。获批后才可执行。仅 Plan 模式可用，子代理被硬性禁止。",
             props(required = emptyList())
         )
     )
@@ -147,8 +153,8 @@ object Tools {
             WRITE_FILE -> spec.copy(description = "写入文本文件。相对路径位于当前工作目录；也可使用已授权的绝对路径。计划模式仅可写入 $planPath。实际权限由运行时模式、目录范围和计划文件边界强制检查。")
             READ_FILE -> spec.copy(description = "读取文本、图片或 PDF。路径可为当前工作目录相对路径或已授权的绝对路径。")
             LIST_FILES -> spec.copy(description = "递归列出文件，结果有数量上限。路径可为当前工作目录相对路径或已授权的绝对路径。")
-            ENTER_PLAN_MODE -> spec.copy(description = "主代理进入计划模式；计划文件固定为 $planPath，子代理被硬性禁止。")
-            EXIT_PLAN_MODE -> spec.copy(description = "主代理提交 $planPath 的当前内容给用户审批；子代理被硬性禁止。")
+            ENTER_PLAN_MODE -> spec.copy(description = "主代理进入计划模式；计划文件固定为 $planPath。完成计划后先保存该文件，再调用 exit_plan_mode 提交审批，不能直接结束或执行。子代理被硬性禁止。")
+            EXIT_PLAN_MODE -> spec.copy(description = "主代理完成计划后必须调用本工具，提交 $planPath 的当前内容并等待用户审批。先用 write_file/edit_file 保存非空计划，再调用本工具；仅在聊天中展示计划或说已完成不算提交。拒绝或反馈后修订并重新提交；只有获批才可执行。仅 Plan 模式可用，子代理被硬性禁止。")
             else -> spec
         }
     }

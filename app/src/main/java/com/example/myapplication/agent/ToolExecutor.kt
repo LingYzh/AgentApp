@@ -32,7 +32,7 @@ class ToolExecutor(
                 allowedTools.any { it in setOf(Tools.ENTER_PLAN_MODE, Tools.EXIT_PLAN_MODE) })
         return Tools.specs(permissionSession.planPath, includePlanControls)
         .filter { spec ->
-            (allowedTools == null || spec.name in allowedTools ||
+            (allowedTools == null || spec.name in allowedTools || spec.name == Tools.GET_SESSION_STATE ||
                 (includePlanControls && spec.name in setOf(Tools.ENTER_PLAN_MODE, Tools.EXIT_PLAN_MODE))) &&
                 (spec.name != Tools.RUN_SUBAGENT || onRunSubagent != null)
         }
@@ -75,6 +75,8 @@ class ToolExecutor(
                 Tools.RUN_COMMAND -> runCommand(arg("command"), arg("cwd"))
                 Tools.ENTER_PLAN_MODE -> permissionSession.enterPlan()
                 Tools.EXIT_PLAN_MODE -> permissionSession.exitPlan()
+                // Read current session state at execution time, never infer it from chat history.
+                Tools.GET_SESSION_STATE -> permissionSession.stateDescription(specs().map { it.name })
                 Tools.SAVE_MEMORY -> mutate(Tools.SAVE_MEMORY) {
                     val id = arg("id").takeIf { it.isNotBlank() }
                     if (id != null && store.listMemories().none { it.id == id }) {

@@ -1,5 +1,7 @@
 package com.example.myapplication.ui.chat
 
+import com.example.myapplication.ui.components.AppModalBottomSheet
+
 import com.example.myapplication.ui.components.PrototypeTextField
 
 import android.os.Environment
@@ -34,7 +36,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
@@ -87,7 +88,7 @@ internal fun SessionPermissionsDialog(
     val saveScope = rememberCoroutineScope()
     val shortcuts = remember(defaultWorkingDirectory) { commonDirectoryShortcuts(defaultWorkingDirectory) }
 
-    ModalBottomSheet(onDismissRequest = { if (!saving) onDismiss() }, containerColor = MaterialTheme.colorScheme.background,
+    AppModalBottomSheet(onDismissRequest = { if (!saving) onDismiss() }, containerColor = MaterialTheme.colorScheme.background,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true,
             confirmValueChange = { !saving })) {
         if (pickerKind != null) {

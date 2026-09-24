@@ -19,7 +19,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -48,7 +47,7 @@ fun ListOperationsMenu(
         }
     }
     if (expanded) {
-        ModalBottomSheet(onDismissRequest = { expanded = false }) {
+        AppModalBottomSheet(onDismissRequest = { expanded = false }) {
             Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 12.dp)) {
                 Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp),
                     verticalAlignment = Alignment.CenterVertically) {

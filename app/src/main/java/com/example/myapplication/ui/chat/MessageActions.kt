@@ -9,6 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,14 +20,22 @@ import androidx.compose.ui.unit.dp
 import com.example.myapplication.data.model.ChatMessage
 
 @Composable
-internal fun MessageActions(message: ChatMessage, canEdit: Boolean, onEdit: () -> Unit, onDelete: () -> Unit) {
+internal fun MessageActions(
+    message: ChatMessage,
+    canEdit: Boolean,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    copyContent: String? = null,
+    onRegenerate: (() -> Unit)? = null,
+    onBranch: (() -> Unit)? = null
+) {
     val clipboard = LocalClipboardManager.current
     var expanded by remember { mutableStateOf(false) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (message.excludedFromContext) Text("未纳入上下文", style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 6.dp))
         IconButton(onClick = {
-            val copyText = message.content.ifBlank {
+            val copyText = copyContent ?: message.content.ifBlank {
                 message.attachments.joinToString("\n") { it.name }.ifBlank {
                     message.toolCalls.joinToString("\n\n") { "${friendlyToolTitle(it.name)}\n${it.argumentsJson}" }
                 }
@@ -35,17 +44,46 @@ internal fun MessageActions(message: ChatMessage, canEdit: Boolean, onEdit: () -
         }, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Outlined.ContentCopy, "复制消息", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (canEdit) Box {
+        if (canEdit && onRegenerate != null) IconButton(onClick = onRegenerate, modifier = Modifier.size(48.dp)) {
+            Icon(Icons.Outlined.Refresh, if (message.isError) "重试回复" else "重新生成", Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (canEdit || onBranch != null) Box {
             IconButton(onClick = { expanded = true }, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Outlined.MoreHoriz, "消息操作", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
-                DropdownMenuItem(text = { Text("编辑消息") }, onClick = { expanded = false; onEdit() })
-                DropdownMenuItem(text = { Text("删除消息", color = MaterialTheme.colorScheme.error) },
-                    onClick = { expanded = false; onDelete() })
+                if (onBranch != null) DropdownMenuItem(text = { Text("从这里分支") },
+                    onClick = { expanded = false; onBranch() })
+                if (canEdit) {
+                    DropdownMenuItem(text = { Text(if (message.role == "assistant") "编辑整个回复" else "编辑消息") },
+                        onClick = { expanded = false; onEdit() })
+                    DropdownMenuItem(text = { Text(if (message.role == "assistant") "删除整个回复" else "删除消息", color = MaterialTheme.colorScheme.error) },
+                        onClick = { expanded = false; onDelete() })
+                }
             }
         }
     }
+}
+
+/** Edit all text segments together without merging or rewriting signed tool protocol blocks. */
+@Composable
+internal fun EditReplyDialog(messages: List<ChatMessage>, onDismiss: () -> Unit, onSave: (Map<String, String>) -> Unit) {
+    var texts by remember(messages) { mutableStateOf(messages.associate { it.id to it.content }) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("编辑整个回复") }, text = {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("一次保存整次回复的正文。工具调用和执行记录保留，不会重新执行。", style = MaterialTheme.typography.bodySmall)
+            messages.forEachIndexed { index, message ->
+                PrototypeTextField(texts.getValue(message.id), { texts = texts + (message.id to it) },
+                    modifier = Modifier.fillMaxWidth(), minLines = 2, maxLines = 8,
+                    label = { Text("正文 ${index + 1}") })
+            }
+        }
+    }, confirmButton = {
+        UiTextButton(onClick = { onSave(texts) }, enabled = messages.all {
+            texts[it.id].orEmpty().isNotBlank() || it.toolCalls.isNotEmpty()
+        }) { Text("保存") }
+    }, dismissButton = { UiTextButton(onClick = onDismiss) { Text("取消") } })
 }
 
 @Composable

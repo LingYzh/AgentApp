@@ -48,6 +48,36 @@ class PermissionRuntimeTest {
     }
 
     @Test
+    fun `session query is read only always available and reflects live mode`() = runBlocking {
+        val conversation = Conversation(permissionMode = PermissionMode.PLAN)
+        val session = PermissionSession(store, conversation, PermissionCoordinator())
+        val executor = ToolExecutor(store, allowedTools = setOf(Tools.READ_FILE), permissionSession = session)
+        assertTrue(executor.specs().any { it.name == Tools.GET_SESSION_STATE })
+        val plan = executor.execute(Tools.GET_SESSION_STATE, "{}")
+        assertTrue(plan.contains("当前权限模式：PLAN"))
+        assertTrue(plan.contains(session.planPath))
+        assertFalse(plan.contains("运行时允许的工具：write_file"))
+        assertEquals(PermissionMode.PLAN, conversation.permissionMode)
+        conversation.permissionMode = PermissionMode.READONLY
+        assertTrue(executor.execute(Tools.GET_SESSION_STATE, "{}").contains("当前权限模式：READONLY"))
+        assertEquals(PermissionMode.READONLY, conversation.permissionMode)
+        val child = ToolExecutor(store, allowedTools = setOf(Tools.READ_FILE), permissionSession = session.childSession())
+        assertTrue(child.execute(Tools.GET_SESSION_STATE, "{}").contains("当前代理：子代理"))
+    }
+
+    @Test
+    fun `plan instructions require file save and explicit submission`() {
+        val conversation = Conversation(permissionMode = PermissionMode.PLAN)
+        val session = PermissionSession(store, conversation, PermissionCoordinator())
+        assertTrue(session.modePrompt().contains("exit_plan_mode"))
+        assertTrue(session.enterPlan().contains("exit_plan_mode"))
+        val description = Tools.specs(session.planPath, true).single { it.name == Tools.EXIT_PLAN_MODE }.description
+        assertTrue(description.contains(session.planPath))
+        assertTrue(description.contains("必须调用"))
+        assertTrue(description.contains("等待用户审批"))
+    }
+
+    @Test
     fun `readonly blocks mutations but can enter plan`() = runBlocking {
         val conversation = Conversation(permissionMode = PermissionMode.READONLY)
         val executor = executor(conversation)

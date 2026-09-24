@@ -209,6 +209,26 @@ class AgentEngineTest {
     }
 
     @Test
+    fun `invalidated history environment is refreshed from live permissions`() = runBlocking {
+        val fake = FakeProvider(ArrayDeque<List<StreamEvent>>(List(2) {
+            listOf(StreamEvent.Text("ok"), StreamEvent.Done("stop"))
+        }))
+        val conversation = newConversation().also { it.permissionMode = PermissionMode.PLAN }
+        val engine = AgentEngine(store, FakeFactory(fake))
+        engine.run(conversation, config)
+        val old = conversation.messages.single { it.contextKind == "environment" }
+        val index = conversation.messages.indexOf(old)
+        conversation.messages[index] = old.copy(excludedFromContext = true)
+        conversation.messages += ChatMessage(role = "user", content = "what is my current permission")
+        engine.run(conversation, config)
+        val sent = fake.receivedMessages.last().filter { it.contextKind == "environment" }
+        assertEquals(1, sent.size)
+        assertTrue(sent.single().id != old.id)
+        assertTrue(sent.single().content.contains("当前权限模式：PLAN"))
+        assertEquals(PermissionMode.PLAN, conversation.permissionMode)
+    }
+
+    @Test
     fun `empty rejection removes all new media in a tool batch and keeps protocol results`() = runBlocking {
         store.writeWorkspace("one.png", "one")
         store.writeWorkspace("two.png", "two")

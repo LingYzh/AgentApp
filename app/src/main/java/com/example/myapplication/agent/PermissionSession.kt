@@ -183,7 +183,7 @@ class PermissionSession(
     fun enterPlan(): String {
         if (isChild) return "错误: 子代理不能切换权限模式"
         conversation.permissionMode = PermissionMode.PLAN
-        return "已进入计划模式。请将可执行计划写入 $planPath；除该文件外不能修改任何内容。"
+        return "已进入计划模式。请将可执行计划写入 $planPath；除该文件外不能修改任何内容。计划完成后必须调用 exit_plan_mode 提交给用户审批；仅展示正文不算提交，批准前不得执行。"
     }
 
     suspend fun exitPlan(): String {
@@ -211,12 +211,22 @@ class PermissionSession(
         PermissionMode.PLAN -> if (isChild) {
             "权限模式：Plan（子代理）。只能研究、读取和列出内容，不能写计划、切换模式、执行命令。"
         } else {
-            "权限模式：Plan。只可写入计划文件 $planPath；不得执行命令。"
+            "权限模式：Plan。只可写入计划文件 $planPath；不得执行命令。计划完成后必须先保存该文件，再调用 exit_plan_mode 提交审批并等待结果；不能用聊天正文代替提交。用户要求补充信息时可先提问；获得批准前不得执行计划。"
         }
         PermissionMode.AUTO -> "权限模式：Auto。不会弹出应用内确认；文件工具仍受当前工作目录和额外目录的并集限制。" +
             "shell 命令不做目录沙箱，仍受 Android 权限约束。应用托管的记忆和 Skill 不受文件工具目录范围影响，但仍受工具授权与当前模式约束。"
         PermissionMode.READONLY -> "权限模式：Readonly。只能读取、检索和列出内容，不能修改或执行命令；主代理仍可进入 Plan 以仅写入计划文件。"
     } + "\n文件工具有效范围（并集）：${scopeDescription()}。shell 命令不受此范围约束，仍受模式、审批和 Android 权限约束。"
+
+    fun stateDescription(toolNames: List<String>): String = buildString {
+        appendLine("当前权限模式：${conversation.permissionMode}")
+        appendLine(modePrompt())
+        appendLine("当前代理：${if (isChild) "子代理" else "主代理"}")
+        appendLine("计划文件：$planPath")
+        appendLine("运行时允许的工具：${toolNames.filter { toolBlockReason(it) == null }.joinToString(", ")}")
+        toolNames.forEach { name -> toolBlockReason(name)?.let { appendLine("不可用 $name：$it") } }
+        append("文件路径等参数仍需执行时校验；本查询不会授予 Android 系统权限。")
+    }
 
     fun scopeDenied(message: String): String = "$message；当前文件工具有效范围：${scopeDescription()}。" +
         "请在会话的权限面板调整工作目录或额外目录后重试；Auto 只取消应用内确认，不会绕过该范围。" +

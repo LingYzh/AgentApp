@@ -27,7 +27,7 @@ object ContextWindows {
             "user" to 0L, "assistant" to 0L, "results" to 0L, "attachments" to 0L, "summary" to 0L)
         counts["system"] = estimate(conversation.systemPromptSnapshot ?: agentProfile?.systemPrompt.orEmpty())
         val selected = agentProfile?.tools.orEmpty()
-        counts["tools"] = Tools.ALL.filter { (selected.isEmpty() || it.name in selected) &&
+        counts["tools"] = Tools.ALL.filter { (selected.isEmpty() || it.name in selected || it.name == Tools.GET_SESSION_STATE) &&
             (conversation.parentConversationId == null || it.name !in setOf(Tools.RUN_SUBAGENT, Tools.ENTER_PLAN_MODE, Tools.EXIT_PLAN_MODE))
         }.sumOf { estimate(it.name + it.description + it.parameters.toString()) + 8 }
         replay(conversation).forEach { message ->

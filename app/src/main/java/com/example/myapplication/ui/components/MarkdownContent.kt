@@ -19,7 +19,11 @@ import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -64,36 +68,57 @@ import coil.compose.AsyncImage
 
 /** Native Compose blocks: no AndroidView replacement or whole-message text layout reset. */
 @Composable
-fun MarkdownContent(text: String, modifier: Modifier = Modifier, streaming: Boolean = false) {
+fun MarkdownContent(
+    text: String,
+    modifier: Modifier = Modifier,
+    streaming: Boolean = false,
+    immediate: Boolean = false
+) {
     val latest by rememberUpdatedState(text)
-    // Initial text must have its real height on first composition (especially when scrolling
-    // back into an older message). Only subsequent streamed updates parse in the background.
-    var document by remember { mutableStateOf(MarkdownDocument.parse(text)) }
-    var parsedText by remember { mutableStateOf(text) }
-    val pacer = remember { StreamingTextPacer(text) }
-    // Sampling continues to draw during an uninterrupted stream. Keep the previous document
-    // visible until parsing completes, including the final update. Never animate replacements.
-    LaunchedEffect(streaming, if (streaming) null else text) {
-        do {
-            val started = System.nanoTime()
-            val source = pacer.next(latest, started / 1_000_000, streaming)
-            if (parsedText != source) {
-                val previous = document
-                val parsed = withContext(Dispatchers.Default) {
-                    reuseMarkdownBlocks(previous, MarkdownDocument.parse(source))
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    // Only a newly composed live message buffers its first chunk. Reopening a lazy-list item
+    // or restoring the Activity shows the current snapshot without replaying old text.
+    var previouslyComposed by rememberSaveable { mutableStateOf(false) }
+    val initial = remember { if (streaming && !previouslyComposed) "" else text }
+    val initiallyStreaming = remember { streaming }
+    SideEffect { previouslyComposed = true }
+    var document by remember { mutableStateOf(MarkdownDocument.parse(initial)) }
+    var parsedText by remember { mutableStateOf(initial) }
+    var revealEnabled by remember { mutableStateOf(false) }
+    val pacer = remember { StreamingTextPacer(initial) }
+    LaunchedEffect(lifecycle, streaming, immediate, if (streaming && !immediate) null else text) {
+        var resumed = false
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            var synchronize = resumed
+            resumed = true
+            do {
+                val started = System.nanoTime()
+                val synchronizeNow = immediate || synchronize
+                val source = pacer.next(latest, started / 1_000_000, streaming, synchronizeNow)
+                synchronize = false
+                if (synchronizeNow) revealEnabled = false
+                if (parsedText != source) {
+                    val previous = document
+                    val parsed = withContext(Dispatchers.Default) {
+                        reuseMarkdownBlocks(previous, MarkdownDocument.parse(source))
+                    }
+                    document = parsed
+                    revealEnabled = !synchronizeNow && (streaming || revealEnabled || initiallyStreaming)
+                    parsedText = source
                 }
-                document = parsed
-                parsedText = source
-            }
-            if (!streaming) break
-            // Target 30Hz on cheap paragraphs; expensive documents back off without adding
-            // a fixed 120ms after their parse. The old document stays visible throughout.
-            val spentMs = (System.nanoTime() - started) / 1_000_000
-            val intervalMs = (spentMs * 2).coerceIn(32L, 120L)
-            delay((intervalMs - spentMs).coerceAtLeast(1L))
-        } while (isActive)
+                if ((!streaming || immediate) && !pacer.hasPending) break
+                // Full parsing keeps CommonMark references correct. Bound its cadence instead
+                // of parsing on every display frame; expensive documents get additional room.
+                val spentMs = (System.nanoTime() - started) / 1_000_000
+                val intervalMs = if (streaming) maxOf(pacer.updateIntervalMs, spentMs * 2).coerceAtMost(180L)
+                    else 32L
+                delay((intervalMs - spentMs).coerceAtLeast(1L))
+            } while (isActive)
+        }
     }
-    SelectionContainer(modifier.fillMaxWidth()) { MarkdownBlocks(document) }
+    CompositionLocalProvider(LocalStreamingReveal provides (revealEnabled && !immediate)) {
+        SelectionContainer(modifier.fillMaxWidth()) { MarkdownBlocks(document) }
+    }
 }
 
 @Composable
@@ -350,7 +375,8 @@ private fun RichMarkdownText(
         }
     }
     var layout by remember(presentation) { mutableStateOf<TextLayoutResult?>(null) }
-    val decoratedModifier = modifier.fillMaxWidth().drawBehind {
+    val reveal = rememberStreamingTextReveal(presentation.annotated.text)
+    val decoratedModifier = modifier.fillMaxWidth().then(reveal.modifier).drawBehind {
         layout?.let {
             drawInlineCodeBackgrounds(
                 it,
@@ -367,7 +393,7 @@ private fun RichMarkdownText(
         style = style,
         color = color,
         textAlign = textAlign,
-        onTextLayout = { layout = it }
+        onTextLayout = { layout = it; reveal.onTextLayout(it) }
     )
     selectedFootnote?.let { FootnoteDialog(it) { selectedFootnote = null } }
 }
@@ -601,6 +627,7 @@ private fun MarkdownCode(block: MarkdownBlock.Code, modifier: Modifier = Modifie
 @Composable
 private fun CodeText(tokens: List<SyntaxToken>?, raw: String, wrap: Boolean) {
     val colors = MaterialTheme.colorScheme
+    val reveal = rememberStreamingTextReveal(raw)
     val syntax = if (colors.surface.luminance() < .5f) {
         CodeSyntaxColors(
             keyword = Color(0xFFE8AD94), string = Color(0xFFB4CEA5),
@@ -631,9 +658,10 @@ private fun CodeText(tokens: List<SyntaxToken>?, raw: String, wrap: Boolean) {
     }
     if (annotated == null) {
         Text(raw, fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 24.sp,
-            softWrap = wrap, color = colors.onSurface)
+            softWrap = wrap, color = colors.onSurface, modifier = reveal.modifier, onTextLayout = reveal.onTextLayout)
     } else {
-        Text(annotated, fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 24.sp, softWrap = wrap)
+        Text(annotated, fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 24.sp, softWrap = wrap,
+            modifier = reveal.modifier, onTextLayout = reveal.onTextLayout)
     }
 }
 

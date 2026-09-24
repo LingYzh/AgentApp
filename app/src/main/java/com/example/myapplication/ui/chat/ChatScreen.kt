@@ -23,6 +23,7 @@ import com.example.myapplication.data.model.PermissionMode
 import com.example.myapplication.data.model.NewChatDefaults
 import com.example.myapplication.data.model.defaultEffort
 import com.example.myapplication.data.model.sessionEffort
+import com.example.myapplication.data.model.reasoningSupportForModel
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
@@ -156,7 +157,6 @@ import com.example.myapplication.data.model.ModelResolver
 import com.example.myapplication.data.model.ProviderConfig
 import com.example.myapplication.data.model.ReasoningEffort
 import com.example.myapplication.data.model.ReasoningSupport
-import com.example.myapplication.data.model.reasoningSupportFor
 import com.example.myapplication.provider.ProviderJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -241,6 +241,8 @@ class ChatViewModel(
 
     private val _streaming = MutableStateFlow(false)
     val streaming = _streaming.asStateFlow()
+    private val _playbackInterrupted = MutableStateFlow(false)
+    val playbackInterrupted = _playbackInterrupted.asStateFlow()
     private val _historyBusy = MutableStateFlow(false)
     val historyBusy = _historyBusy.asStateFlow()
     private val _contextOverview = MutableStateFlow<ContextOverview?>(null)
@@ -454,8 +456,8 @@ class ChatViewModel(
         selectedProviderId.value = resolved?.id
         _currentModel.value = resolved?.model.orEmpty()
         _reasoningSupport.value = resolved?.let {
-            val support = reasoningSupportFor(it.type, it.model)
-            if (it.type == com.example.myapplication.data.model.ProviderType.ANTHROPIC) {
+            val support = it.reasoningSupportForModel()
+            if (it.type == com.example.myapplication.data.model.ProviderType.ANTHROPIC && support.efforts.isNotEmpty()) {
                 support.copy(protocol = com.example.myapplication.data.model.anthropicThinkingProtocol(it.model, it.anthropicThinkingMode))
             } else support
         }
@@ -664,11 +666,18 @@ class ChatViewModel(
     }
 
     fun send(text: String) {
-        if ((text.isBlank() && _attachments.value.isEmpty()) || _streaming.value || _historyBusy.value || _importing.value || _isChild.value) return
+        generate(text)
+    }
+
+    fun regenerate(replyId: String) = generate("", replyId)
+
+    private fun generate(text: String, retryReplyId: String? = null) {
+        if ((retryReplyId == null && text.isBlank() && _attachments.value.isEmpty()) || _streaming.value || _historyBusy.value || _compacting.value || _importing.value || _isChild.value) return
         var conv = conversation ?: run {
             _error.value = "对话尚未加载完成"
             return
         }
+        _playbackInterrupted.value = false
         _streaming.value = true
         _error.value = null
         generationJob = viewModelScope.launch {
@@ -681,11 +690,19 @@ class ChatViewModel(
                     _error.value = "请先在聊天输入框中选择模型；没有可选模型时，可到「模型供应商设置」获取或添加模型"
                     return@launch
                 }
-                val attachments = _attachments.value.toList()
-                val message = ChatMessage(role = "user", content = text.trim(), attachments = attachments)
+                val retryHistory = retryReplyId?.let { id ->
+                    require(ConversationEdits.replyGroups(conv.messages).any { group ->
+                        group.isLatest && group.lastAssistantId == id && group.userMessage != null
+                    }) { "只有最新回复可以重新生成；历史回复请先创建分支" }
+                    ConversationEdits.truncateForRegeneration(conv.messages.toList())
+                }
+                val retryUser = retryHistory?.lastOrNull { ConversationEdits.isRealUserMessage(it) }
+                val attachments = retryUser?.attachments ?: _attachments.value.toList()
+                val message = retryUser ?: ChatMessage(role = "user", content = text.trim(), attachments = attachments)
                 withContext(Dispatchers.IO) {
                     ConversationContext.recoverRejectedAttachments(conv)
-                    val replayMessages = ContextWindows.replay(conv)
+                    val replayMessages = ContextWindows.replay(if (retryHistory == null) conv else
+                        conv.copy(messages = retryHistory.toMutableList(), contextCompaction = null))
                     require(resolved.type != com.example.myapplication.data.model.ProviderType.CUSTOM ||
                         (attachments.isEmpty() && replayMessages.none { it.attachments.isNotEmpty() })) {
                         "自定义模板不支持附件读取，请改用 OpenAI 兼容、Anthropic 或 Gemini 协议"
@@ -693,7 +710,9 @@ class ChatViewModel(
                     app.attachmentStore.validateNative(resolved, replayMessages.flatMap { it.attachments } + attachments)
                     attachments.filter { it.delivery == "native" }.forEach { app.attachmentStore.fileFor(it) }
                 }
-                val candidate = conv.copy(messages = (conv.messages + message).toMutableList())
+                val candidate = conv.copy(messages = (retryHistory ?: (conv.messages + message)).toMutableList(),
+                    contextCompaction = if (retryHistory != null) null else conv.contextCompaction,
+                    lastContextUsage = if (retryHistory != null) null else conv.lastContextUsage)
                 if (candidate.title == "新对话") {
                     candidate.title = text.trim().ifBlank { attachments.firstOrNull()?.name ?: "文件对话" }.take(24)
                 }
@@ -708,8 +727,10 @@ class ChatViewModel(
                     conversationId = conv.id
                     isDraft = false
                     permissionSession = PermissionSession(app.store, conv, app.permissionCoordinator)
-                    _attachments.value = emptyList()
-                    if (input == text) input = ""
+                    if (retryReplyId == null) {
+                        _attachments.value = emptyList()
+                        if (input == text) input = ""
+                    }
                     _sendRevision.value++
                     _committedId.value = conv.id
                     _title.value = conv.title
@@ -741,19 +762,27 @@ class ChatViewModel(
                     )
                 }
             } catch (cancelled: CancellationException) {
+                _playbackInterrupted.value = true
                 throw cancelled
             } catch (e: Exception) {
+                _playbackInterrupted.value = true
                 _error.value = e.message ?: "发送失败"
             } finally {
                 // 退出页面或主动停止时也先完成保存，再允许下一次发送。
-                try {
-                    withContext(NonCancellable + Dispatchers.IO) { if (committed) app.store.saveConversation(conv) }
-                } catch (error: Exception) {
-                    _error.value = error.message ?: "会话保存失败"
+                withContext(NonCancellable) {
+                    try {
+                        withContext(Dispatchers.IO) { if (committed) app.store.saveConversation(conv) }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        _error.value = error.message ?: "会话保存失败"
+                    }
+                    // Keep the IO return and UI receipt inside the same cancellation shield;
+                    // otherwise a successful save can surface cancellation as a save error.
+                    _streaming.value = false
+                    _toolStatus.value = null
+                    _messages.value = conv.messages.toList()
                 }
-                _streaming.value = false
-                _toolStatus.value = null
-                _messages.value = conv.messages.toList()
                 val appConfig = withContext(Dispatchers.IO) { app.store.loadConfig() }
                 refreshContextOverview(resolved = ModelResolver.resolve(conv, appConfig, agents))
             }
@@ -761,6 +790,8 @@ class ChatViewModel(
     }
 
     fun stop() {
+        // Flush the presentation queue immediately, even while network cancellation unwinds.
+        _playbackInterrupted.value = true
         generationJob?.cancel()
     }
 
@@ -769,28 +800,72 @@ class ChatViewModel(
     }
 
     fun deleteMessage(id: String) {
-        changeHistory { ConversationEdits.delete(it, id) }
+        changeHistory { messages ->
+            if (messages.any { it.id == id && it.role == "assistant" }) ConversationEdits.deleteReply(messages, id)
+            else ConversationEdits.delete(messages, id)
+        }
+    }
+
+    fun editReply(edits: Map<String, String>) = changeHistory { ConversationEdits.editReply(it, edits) }
+
+    fun prefillBranch(message: ChatMessage) {
+        input = message.content
+        _attachments.value = message.attachments.toList()
+    }
+
+    fun branch(id: String, onCreated: (Conversation, ChatMessage?) -> Unit) {
+        if (_streaming.value || _historyBusy.value || _compacting.value) return
+        val source = (if (_isChild.value) _childSnapshot.value else conversation) ?: return
+        _historyBusy.value = true
+        viewModelScope.launch {
+            try {
+                modelSaveJob?.join()
+                val user = source.messages.firstOrNull { it.id == id && ConversationEdits.isRealUserMessage(it) }
+                withContext(NonCancellable) {
+                    val created = withContext(Dispatchers.IO) {
+                        val next = ConversationEdits.branchAt(source, id)
+                        // A branch in Plan has its own designated plan file.
+                        permissionSession?.readPlan()?.let { plan ->
+                            app.store.writeWorkspace(PermissionSession(app.store, next, app.permissionCoordinator).planPath, plan)
+                        }
+                        app.store.saveConversation(next)
+                        next
+                    }
+                    onCreated(created, user)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _error.value = error.message ?: "创建分支失败"
+            } finally {
+                _historyBusy.value = false
+            }
+        }
     }
 
     private fun changeHistory(change: (List<ChatMessage>) -> List<ChatMessage>) {
-        if (_streaming.value || _historyBusy.value || _isChild.value) return
+        if (_streaming.value || _historyBusy.value || _compacting.value || _isChild.value) return
         val conv = conversation ?: return
         _historyBusy.value = true
         viewModelScope.launch {
             try {
                 modelSaveJob?.join()
-                val revised = change(conv.messages.toList())
+                val revised = change(conv.messages.toList()).map {
+                    if (it.contextKind == "environment") it.copy(excludedFromContext = true) else it
+                }
                 val persisted = conv.copy(
                     messages = revised.toMutableList(),
                     contextCompaction = null,
                     lastContextUsage = null
                 )
-                withContext(Dispatchers.IO) { app.store.saveConversation(persisted) }
-                conv.messages.clear()
-                conv.messages.addAll(revised)
-                conv.contextCompaction = null
-                conv.lastContextUsage = null
-                _messages.value = revised
+                withContext(NonCancellable) {
+                    withContext(Dispatchers.IO) { app.store.saveConversation(persisted) }
+                    conv.messages.clear()
+                    conv.messages.addAll(revised)
+                    conv.contextCompaction = null
+                    conv.lastContextUsage = null
+                    _messages.value = revised
+                }
                 val appConfig = withContext(Dispatchers.IO) { app.store.loadConfig() }
                 refreshContextOverview(resolved = ModelResolver.resolve(conv, appConfig, agents))
             } catch (cancelled: CancellationException) {
@@ -834,6 +909,7 @@ fun ChatScreen(
     val selectedProviderId by vm.selectedProviderId.collectAsStateWithLifecycle()
     val currentModel by vm.currentModel.collectAsStateWithLifecycle()
     val streaming by vm.streaming.collectAsStateWithLifecycle()
+    val playbackInterrupted by vm.playbackInterrupted.collectAsStateWithLifecycle()
     val historyBusy by vm.historyBusy.collectAsStateWithLifecycle()
     val contextOverview by vm.contextOverview.collectAsStateWithLifecycle()
     val reasoningSupport by vm.reasoningSupport.collectAsStateWithLifecycle()
@@ -885,6 +961,7 @@ fun ChatScreen(
         currentModel = currentModel,
         selectedProviderId = selectedProviderId,
         streaming = streaming,
+        playbackInterrupted = playbackInterrupted || childSnapshot?.executionStatus in listOf("cancelled", "failed"),
         toolStatus = toolStatus,
         modelOptions = modelOptions,
         onBack = { openDrawer?.invoke() ?: navController.safePopBackStack() },
@@ -917,6 +994,13 @@ fun ChatScreen(
         historyBusy = historyBusy,
         onEditMessage = vm::editMessage,
         onDeleteMessage = vm::deleteMessage,
+        onEditReply = vm::editReply,
+        onRegenerate = vm::regenerate,
+        onBranch = { id -> vm.branch(id) { created, user ->
+            val branchVm = sessions.session(app, created.id, created.id, null)
+            user?.let(branchVm::prefillBranch)
+            navController.showHomeChat(created.id)
+        } },
         childExecutionStatus = childSnapshot?.executionStatus,
         childStopReason = childSnapshot?.stopReason,
         canStopChild = childSnapshot?.executionStatus == "running" && !stopRequested,
@@ -992,7 +1076,11 @@ fun ChatContent(
     onSelectAgent: (AgentProfile?) -> Unit = {},
     conversationKey: String = "",
     onRenameConversation: suspend (String) -> String? = { null },
-    onOpenSession: () -> Unit = {}
+    onOpenSession: () -> Unit = {},
+    playbackInterrupted: Boolean = false,
+    onEditReply: (Map<String, String>) -> Unit = {},
+    onRegenerate: (String) -> Unit = {},
+    onBranch: (String) -> Unit = {}
 ) {
     val listState = rememberLazyListState()
     var renameDialog by rememberSaveable(conversationKey) { mutableStateOf(false) }
@@ -1010,6 +1098,26 @@ fun ChatContent(
     var previewAttachment by remember { mutableStateOf<MessageAttachment?>(null) }
     var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
     var deletingMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    var editingReply by remember { mutableStateOf<List<ChatMessage>?>(null) }
+    var regeneratingReply by remember { mutableStateOf<String?>(null) }
+    // Network completion precedes the final buffer drain and draw-only fade.
+    var settlingReply by remember { mutableStateOf(streaming) }
+    LaunchedEffect(streaming) {
+        if (streaming) settlingReply = true
+        else if (settlingReply) { delay(450); settlingReply = false }
+    }
+    editingReply?.let { reply ->
+        EditReplyDialog(reply, onDismiss = { editingReply = null }) { edits ->
+            onEditReply(edits)
+            editingReply = null
+        }
+    }
+    regeneratingReply?.let { id ->
+        AlertDialog(onDismissRequest = { regeneratingReply = null }, title = { Text("重新生成这次回复？") },
+            text = { Text("将使用原问题和附件替换整个回复。工具可能再次执行，之前已执行的文件修改不会撤销。当前权限设置保持不变。") },
+            confirmButton = { UiTextButton(onClick = { regeneratingReply = null; onRegenerate(id) }) { Text("重新生成") } },
+            dismissButton = { UiTextButton(onClick = { regeneratingReply = null }) { Text("取消") } })
+    }
     previewAttachment?.let { attachment ->
         AttachmentPreviewDialog(attachment, attachmentFile(attachment)) { previewAttachment = null }
     }
@@ -1020,8 +1128,9 @@ fun ChatContent(
         }
     }
     deletingMessage?.let { message ->
-        AlertDialog(onDismissRequest = { deletingMessage = null }, title = { Text("删除这条消息？") },
-            text = { Text(if (message.toolCalls.isEmpty()) "这会改变后续请求的历史内容及缓存。其他消息会保留。"
+        AlertDialog(onDismissRequest = { deletingMessage = null }, title = { Text(if (message.role == "assistant") "删除整个回复？" else "删除这条消息？") },
+            text = { Text(if (message.role == "assistant") "这次回复的所有正文和工具记录将一起删除。已执行的操作不会撤销，后续消息保留，当前权限不变。"
+                else if (message.toolCalls.isEmpty()) "这会改变后续请求的历史内容及缓存。其他消息会保留。"
                 else "这条消息及关联的工具记录将从对话中删除。已执行的文件修改不会撤销，子代理会话仍保留在会话面板中。") },
             confirmButton = { UiTextButton(onClick = { onDeleteMessage(message.id); deletingMessage = null }) { Text("删除") } },
             dismissButton = { UiTextButton(onClick = { deletingMessage = null }) { Text("取消") } })
@@ -1049,6 +1158,8 @@ fun ChatContent(
     val toolResults = remember(messages) { messages.filter { it.role == "tool" }.associateBy { it.toolCallId } }
     val callIds = remember(messages) { messages.flatMap { it.toolCalls }.map { it.id }.toSet() }
     val displayMessages = remember(messages) { messages.filterNot { it.contextKind != null || it.originToolCallId != null || (it.role == "tool" && it.toolCallId in callIds) } }
+    val replyGroups = remember(messages) { ConversationEdits.replyGroups(messages) }
+    val repliesByLastId = remember(replyGroups) { replyGroups.associateBy { it.lastAssistantId } }
     var consumedSendRevision by rememberSaveable { mutableStateOf(sendRevision) }
     LaunchedEffect(sendRevision) {
         if (sendRevision != consumedSendRevision) {
@@ -1289,11 +1400,14 @@ fun ChatContent(
                         }
                     }
                     items(displayMessages, key = { it.id }) { msg ->
+                        val reply = repliesByLastId[msg.id]
+                        val runningReply = reply?.isLatest == true && (streaming || settlingReply || childExecutionStatus == "running")
                         MessageBubble(
                             conversationKey = conversationKey,
                             msg = msg,
                             agentProfile = agentProfile,
                             streaming = streaming && msg.id == streamingMessageId,
+                            playbackInterrupted = playbackInterrupted,
                             onViewFile = onViewFile,
                             toolResults = toolResults,
                             running = streaming || childExecutionStatus == "running",
@@ -1302,8 +1416,14 @@ fun ChatContent(
                             allowFileNavigation = !readOnly,
                             attachmentFile = attachmentFile,
                             onOpenAttachment = { previewAttachment = it },
-                            canEdit = !readOnly && !streaming && !historyBusy,
-                            onEdit = { editingMessage = msg },
+                            canEdit = !readOnly && !streaming && !historyBusy && !compacting,
+                            showActions = msg.role == "user" || (reply != null && !runningReply),
+                            copyContent = reply?.aggregatedContent?.ifBlank {
+                                reply.assistantMessages.flatMap { it.toolCalls }.joinToString("\n\n") { "${friendlyToolTitle(it.name)}\n${it.argumentsJson}" }
+                            },
+                            onRegenerate = if (reply?.isLatest == true && reply.userMessage != null) ({ regeneratingReply = msg.id }) else null,
+                            onBranch = if (!streaming && !historyBusy && !compacting && childExecutionStatus != "running") ({ onBranch(msg.id) }) else null,
+                            onEdit = { if (reply != null) editingReply = reply.assistantMessages else editingMessage = msg },
                             onDelete = { deletingMessage = msg },
                             pendingCommandApproval = pendingCommandApproval,
                             activeToolCallId = if (toolStatus == null && childExecutionStatus != "running") null else messages.flatMap { it.toolCalls }.firstOrNull { it.id !in toolResults }?.id
@@ -1369,6 +1489,7 @@ internal fun friendlyToolTitle(toolName: String?): String = when (toolName) {
     Tools.RUN_COMMAND -> "执行命令"
     Tools.ENTER_PLAN_MODE -> "进入计划模式"
     Tools.EXIT_PLAN_MODE -> "提交计划"
+    Tools.GET_SESSION_STATE -> "查询会话状态"
     Tools.READ_FILE -> "读取文件"
     Tools.LIST_FILES -> "查看工作区文件"
     Tools.SAVE_MEMORY -> "保存记忆"
@@ -1416,7 +1537,12 @@ internal fun MessageBubble(
     canEdit: Boolean = false,
     onEdit: () -> Unit = {},
     onDelete: () -> Unit = {},
-    conversationKey: String = ""
+    conversationKey: String = "",
+    playbackInterrupted: Boolean = false,
+    showActions: Boolean = true,
+    copyContent: String? = null,
+    onRegenerate: (() -> Unit)? = null,
+    onBranch: (() -> Unit)? = null
 ) {
     when (msg.role) {
         "user" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -1437,7 +1563,7 @@ internal fun MessageBubble(
                         }
                     }
                 }
-                MessageActions(msg, canEdit, onEdit, onDelete)
+                if (showActions) MessageActions(msg, canEdit, onEdit, onDelete, copyContent, onRegenerate, onBranch)
             }
         }
         "tool" -> if (msg.toolName == Tools.RUN_SUBAGENT) Text("子代理 · ${if (msg.isError) "已停止或失败" else "已完成"}", style = MaterialTheme.typography.labelMedium) else ToolMessageBlock(msg)
@@ -1448,9 +1574,9 @@ internal fun MessageBubble(
                 Text(agentProfile?.name ?: "通用助手", Modifier.padding(start = 10.dp),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (msg.thinking.isNotBlank()) ThinkingBlock(msg.thinking, streaming)
+            if (msg.thinking.isNotBlank()) ThinkingBlock(msg.thinking, streaming, playbackInterrupted)
             if (msg.content.isNotBlank()) {
-                MarkdownContent(msg.content, Modifier.fillMaxWidth().padding(vertical = 6.dp), streaming)
+                MarkdownContent(msg.content, Modifier.fillMaxWidth().padding(vertical = 6.dp), streaming, playbackInterrupted)
             }
             msg.toolCalls.forEach { call ->
                 androidx.compose.runtime.key(conversationKey, msg.id, call.id) {
@@ -1460,7 +1586,7 @@ internal fun MessageBubble(
                     awaitingApproval = pendingCommandApproval && activeToolCallId == call.id)
                 }
             }
-            MessageActions(msg, canEdit, onEdit, onDelete)
+            if (showActions) MessageActions(msg, canEdit, onEdit, onDelete, copyContent, onRegenerate, onBranch)
         }
     }
 }
@@ -1469,7 +1595,7 @@ internal fun MessageBubble(
  * 极简思考过程呈现组件（主流移动端 AI 风格，无 Card 容器）
  */
 @Composable
-private fun ThinkingBlock(thinking: String, streaming: Boolean = false) {
+private fun ThinkingBlock(thinking: String, streaming: Boolean = false, immediate: Boolean = false) {
     var expanded by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
@@ -1529,7 +1655,7 @@ private fun ThinkingBlock(thinking: String, streaming: Boolean = false) {
                         )
                 )
                 Spacer(Modifier.width(10.dp))
-                MarkdownContent(thinking, Modifier.weight(1f), streaming)
+                MarkdownContent(thinking, Modifier.weight(1f), streaming, immediate)
             }
         }
     }

@@ -1,5 +1,7 @@
 package com.example.myapplication.ui.memory
 
+import com.example.myapplication.ui.components.AppModalBottomSheet
+
 import com.example.myapplication.ui.components.UiScaffold
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.verticalScroll
@@ -34,7 +36,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
@@ -329,7 +330,7 @@ fun MemoryContent(
         var preview by remember(id) { mutableStateOf(false) }
         val previewScroll = androidx.compose.foundation.rememberScrollState()
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(
+        AppModalBottomSheet(
             onDismissRequest = { editTarget = null },
             sheetState = sheetState
         ) {

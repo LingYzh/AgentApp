@@ -29,8 +29,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
+import androidx.compose.ui.tooling.preview.Preview
 import com.example.myapplication.AgentApp
+import com.example.myapplication.ui.theme.AgentTheme
 import com.example.myapplication.Routes
+import com.example.myapplication.agent.PermissionRequest
+import com.example.myapplication.data.model.ChatMessage
+import com.example.myapplication.data.model.Conversation
+import com.example.myapplication.data.model.FileChange
 import com.example.myapplication.data.store.FileChanges
 import com.example.myapplication.data.store.FileDiffResult
 import com.example.myapplication.safeNavigateDirect
@@ -97,6 +103,45 @@ fun SessionScreen(navController: NavHostController, conversationId: String) {
     }
     ConversationFeedbackEffect(vm, error, feedback)
     ConversationApprovalHost(conversationId)
+
+    SessionContent(
+        title = title,
+        plan = plan,
+        children = children,
+        artifacts = artifacts,
+        readOnly = readOnly,
+        pending = pending,
+        conversationId = conversationId,
+        feedback = feedback,
+        onNavigateBack = { navController.safePopBackStack() },
+        onNavigateToChild = { childId -> navController.safeNavigateDirect(Routes.chat(childId)) },
+        onNavigateToFile = { path ->
+            vm.currentFilePath(path)?.let { navController.safeNavigateDirect(Routes.fileView(it)) }
+        }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SessionContent(
+    title: String,
+    plan: String?,
+    children: List<Conversation>,
+    artifacts: List<SessionArtifact>,
+    readOnly: Boolean,
+    pending: List<PermissionRequest>,
+    conversationId: String,
+    feedback: SnackbarHostState,
+    onNavigateBack: () -> Unit,
+    onNavigateToChild: (String) -> Unit,
+    onNavigateToFile: (String) -> Unit
+) {
+    var showPlan by rememberSaveable(conversationId) { mutableStateOf(false) }
+    LaunchedEffect(pending) {
+        // A read-only plan must not obscure an actionable approval raised while it is open.
+        if (pending.any { it.conversationId == conversationId }) showPlan = false
+    }
+
     if (showPlan) PlanDocumentDialog(plan.orEmpty()) { showPlan = false }
     UiScaffold(
         snackbarHost = { TopFeedbackHost(feedback) },
@@ -108,7 +153,7 @@ fun SessionScreen(navController: NavHostController, conversationId: String) {
                         style = MaterialTheme.typography.labelMedium)
                 }
             }, navigationIcon = {
-                IconButton(onClick = { navController.safePopBackStack() }) {
+                IconButton(onClick = onNavigateBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回会话")
                 }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background))
@@ -126,7 +171,7 @@ fun SessionScreen(navController: NavHostController, conversationId: String) {
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Icon(Icons.Outlined.Description, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
                         Column(Modifier.weight(1f)) {
-                            Text(plan?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()?.trimStart('#')?.trim().orEmpty(),
+                            Text(plan.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.trimStart('#')?.trim().orEmpty(),
                                 maxLines = 2, overflow = TextOverflow.Ellipsis)
                             Text(if (pending.any { it.conversationId == conversationId }) "有操作等待审批" else "阅读计划不会批准执行",
                                 style = MaterialTheme.typography.bodySmall)
@@ -141,7 +186,7 @@ fun SessionScreen(navController: NavHostController, conversationId: String) {
                 "已结束" to children.filter { it.executionStatus != "running" })) {
                 if (group.isNotEmpty()) item("group-$label") { Text(label, style = MaterialTheme.typography.labelMedium) }
                 items(group, key = { "child-${it.id}" }) { child ->
-                    Card(onClick = { navController.safeNavigateDirect(Routes.chat(child.id)) },
+                    Card(onClick = { onNavigateToChild(child.id) },
                         modifier = Modifier.animateItem().fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
@@ -164,7 +209,7 @@ fun SessionScreen(navController: NavHostController, conversationId: String) {
                                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             child.stopReason?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                            OutlinedButton(onClick = { navController.safeNavigateDirect(Routes.chat(child.id)) },
+                            OutlinedButton(onClick = { onNavigateToChild(child.id) },
                                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("查看子代理会话") }
                         }
                     }
@@ -174,7 +219,7 @@ fun SessionScreen(navController: NavHostController, conversationId: String) {
             if (artifacts.isEmpty()) item("no-artifacts") { Text("暂无已保存的文件变更记录", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             items(artifacts, key = { "artifact-${it.messageId}" }) { artifact ->
                 SessionArtifactRow(artifact, allowCurrentFile = !readOnly) { path ->
-                    vm.currentFilePath(path)?.let { navController.safeNavigateDirect(Routes.fileView(it)) }
+                    onNavigateToFile(path)
                 }
             }
             item("lifetime") {
@@ -205,5 +250,72 @@ private fun SessionArtifactRow(artifact: SessionArtifact, allowCurrentFile: Bool
             }
             }
         }
+    }
+}
+
+@Preview(showBackground = true, name = "Session - Light")
+@Composable
+private fun SessionPreviewLight() {
+    val dummyChildren = listOf(
+        Conversation(
+            id = "child-1",
+            title = "实现登录页",
+            executionStatus = "completed",
+            messages = mutableListOf(ChatMessage(role = "user", content = "实现包含用户名密码的登录页"))
+        ),
+        Conversation(
+            id = "child-2",
+            title = "网络重试逻辑",
+            executionStatus = "running",
+            modelOverride = "claude-3-5-sonnet",
+            messages = mutableListOf(ChatMessage(role = "user", content = "增加指数退避重试"))
+        )
+    )
+    
+    val dummyArtifacts = listOf(
+        SessionArtifact(
+            messageId = "m1",
+            change = FileChange(path = "app/src/main/java/com/example/Login.kt")
+        ),
+        SessionArtifact(
+            messageId = "m2",
+            change = FileChange(path = "build.gradle.kts")
+        )
+    )
+
+    AgentTheme(themeMode = "light") {
+        SessionContent(
+            title = "重构身份认证模块",
+            plan = "# 第一步\n提取基类\n# 第二步\n替换 API",
+            children = dummyChildren,
+            artifacts = dummyArtifacts,
+            readOnly = false,
+            pending = emptyList(),
+            conversationId = "123",
+            feedback = remember { SnackbarHostState() },
+            onNavigateBack = {},
+            onNavigateToChild = {},
+            onNavigateToFile = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "Session - Dark")
+@Composable
+private fun SessionPreviewDark() {
+    AgentTheme(themeMode = "dark") {
+        SessionContent(
+            title = "会话面板标题",
+            plan = null,
+            children = emptyList(),
+            artifacts = emptyList(),
+            readOnly = false,
+            pending = emptyList(),
+            conversationId = "123",
+            feedback = remember { SnackbarHostState() },
+            onNavigateBack = {},
+            onNavigateToChild = {},
+            onNavigateToFile = {}
+        )
     }
 }

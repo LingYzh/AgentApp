@@ -21,6 +21,15 @@ import org.junit.Test
 class ReasoningRequestTest {
     private val client = OkHttpClient()
 
+    @Test fun `Anthropic default completion cap respects a smaller catalogue maximum`() {
+        val config = ProviderConfig(type = ProviderType.ANTHROPIC, model = "auto",
+            discoveredModelMetadata = mapOf("auto" to com.example.myapplication.data.model.ModelMetadata(maxOutputTokens = 64000)))
+        val body = AnthropicProvider(client).buildRequestBody(config, "", emptyList(), emptyList())
+        assertEquals("64000", body["max_tokens"]!!.jsonPrimitive.content)
+        val explicit = AnthropicProvider(client).buildRequestBody(config.copy(maxOutputTokens = 32000), "", emptyList(), emptyList())
+        assertEquals("32000", explicit["max_tokens"]!!.jsonPrimitive.content)
+    }
+
     @Test
     fun `OpenAI Chat Completions sends configured reasoning effort without an implicit cap`() {
         val body = OpenAiProvider(client).buildRequestBody(

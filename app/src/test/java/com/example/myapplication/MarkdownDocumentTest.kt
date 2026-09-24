@@ -9,6 +9,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MarkdownDocumentTest {
+    @Test fun `chat punctuation does not lower or raise a whole sentence`() {
+        listOf("喵~主人下午好呀！Nya~❤", "你好~世界~", "开心^微笑^").forEach { source ->
+            val paragraph = MarkdownDocument.parse(source).single() as MarkdownBlock.Paragraph
+            assertEquals(source, paragraph.runs.joinToString("") { it.text })
+            assertTrue(paragraph.runs.none { it.subscript || it.superscript })
+        }
+        val explicit = MarkdownDocument.parse("<sub>下标文字</sub> <sup>上标文字</sup> H~2~O x^2^")
+            .single() as MarkdownBlock.Paragraph
+        assertTrue(explicit.runs.any { it.subscript && it.text == "下标文字" })
+        assertTrue(explicit.runs.any { it.superscript && it.text == "上标文字" })
+        assertEquals(2, explicit.runs.count { it.text == "2" && (it.subscript || it.superscript) })
+    }
+
     @Test fun `streaming tail changes do not change preceding semantic blocks`() {
         val prefix = "## 完成\n\n第一段 **重点**。\n\n"
         val before = MarkdownDocument.parse(prefix + "正在输出")

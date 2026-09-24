@@ -1,5 +1,7 @@
 package com.example.myapplication.ui.chat
 
+import com.example.myapplication.ui.components.AppModalBottomSheet
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,7 +25,7 @@ internal fun ModelPicker(options: List<Pair<ProviderConfig, String>>, onSelect: 
     val filtered = remember(options, search) {
         options.filter { (provider, model) -> model.contains(search, true) || provider.name.contains(search, true) }
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.background,
+    AppModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.background,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(.92f).padding(horizontal = 22.dp)) {
             PanelHeading("切换模型", onDismiss)

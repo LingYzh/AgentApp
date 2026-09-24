@@ -3,6 +3,7 @@ package com.example.myapplication.provider
 import com.example.myapplication.data.model.ProviderConfig
 import com.example.myapplication.data.model.ProviderType
 import com.example.myapplication.data.model.ModelCapabilities
+import com.example.myapplication.data.model.ModelMetadata
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -13,7 +14,8 @@ import okhttp3.Request
 /** Missing metadata remains unknown; attachment delivery defaults conservatively. */
 data class ModelCatalog(
     val models: List<String>,
-    val discoveredCapabilities: Map<String, ModelCapabilities>
+    val discoveredCapabilities: Map<String, ModelCapabilities>,
+    val discoveredModelMetadata: Map<String, ModelMetadata> = emptyMap()
 )
 
 /** 从供应商的 /models 接口拉取可用模型列表 */
@@ -97,15 +99,16 @@ class ModelFetcher(private val client: OkHttpClient) {
                     val id = (obj["id"] as? kotlinx.serialization.json.JsonPrimitive)
                         ?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
                         ?: return@mapNotNull null
-                    id to capabilitiesFromExplicitModalities(obj)
+                    Triple(id, capabilitiesFromExplicitModalities(obj), metadataFromModelObject(obj))
                 }
                 ?.sortedBy { it.first }
                 ?: emptyList()
             ModelCatalog(
                 models = entries.map { it.first },
-                discoveredCapabilities = entries.mapNotNull { (id, capabilities) ->
+                discoveredCapabilities = entries.mapNotNull { (id, capabilities, _) ->
                     capabilities?.let { id to it }
-                }.toMap()
+                }.toMap(),
+                discoveredModelMetadata = entries.associate { (id, _, metadata) -> id to metadata }
             )
         }.getOrDefault(ModelCatalog(emptyList(), emptyMap()))
 
@@ -122,15 +125,16 @@ class ModelFetcher(private val client: OkHttpClient) {
                         ?.mapNotNull { runCatching { it.jsonPrimitive.content }.getOrNull() }
                         ?: emptyList()
                     if ("generateContent" !in methods) return@mapNotNull null
-                    name.removePrefix("models/") to capabilitiesFromExplicitModalities(obj)
+                    Triple(name.removePrefix("models/"), capabilitiesFromExplicitModalities(obj), metadataFromModelObject(obj))
                 }
                 ?.sortedBy { it.first }
                 ?: emptyList()
             ModelCatalog(
                 models = entries.map { it.first },
-                discoveredCapabilities = entries.mapNotNull { (id, capabilities) ->
+                discoveredCapabilities = entries.mapNotNull { (id, capabilities, _) ->
                     capabilities?.let { id to it }
-                }.toMap()
+                }.toMap(),
+                discoveredModelMetadata = entries.associate { (id, _, metadata) -> id to metadata }
             )
         }.getOrDefault(ModelCatalog(emptyList(), emptyMap()))
 
@@ -198,6 +202,115 @@ class ModelFetcher(private val client: OkHttpClient) {
             val support = this?.get(key) as? kotlinx.serialization.json.JsonObject ?: return null
             val primitive = support["supported"] as? kotlinx.serialization.json.JsonPrimitive ?: return null
             return if (primitive.isString) null else primitive.content.toBooleanStrictOrNull()
+        }
+
+        private fun metadataFromModelObject(
+            obj: kotlinx.serialization.json.JsonObject
+        ): ModelMetadata {
+            val capabilitiesObj = obj["capabilities"] as? kotlinx.serialization.json.JsonObject
+            val limitObj = obj["limit"] as? kotlinx.serialization.json.JsonObject
+            val architectureObj = obj["architecture"] as? kotlinx.serialization.json.JsonObject
+            val modalitiesObj = obj["modalities"] as? kotlinx.serialization.json.JsonObject
+
+            val reasoning = capabilitiesObj.booleanValue("reasoning")
+                ?: obj.booleanValue("reasoning")
+                ?: obj.booleanValue("supportsThinking")
+
+            val temperature = capabilitiesObj.booleanValue("temperature")
+                ?: obj.booleanValue("temperature")
+
+            val toolCall = capabilitiesObj.booleanValue("toolcall")
+                ?: capabilitiesObj.booleanValue("tool_call")
+                ?: capabilitiesObj.booleanValue("toolCall")
+                ?: obj.booleanValue("tool_call")
+                ?: obj.booleanValue("toolCall")
+                ?: obj.booleanValue("toolcall")
+
+            val promptCaching = capabilitiesObj.booleanValue("promptCaching")
+                ?: capabilitiesObj.booleanValue("prompt_caching")
+                ?: capabilitiesObj.booleanValue("supportsPromptCaching")
+                ?: obj.booleanValue("supportsPromptCaching")
+                ?: obj.booleanValue("promptCaching")
+                ?: obj.booleanValue("prompt_caching")
+
+            val contextWindow = limitObj?.get("context").positiveInt()
+                ?: limitObj?.get("context_window").positiveInt()
+                ?: limitObj?.get("context_length").positiveInt()
+                ?: obj["context_length"].positiveInt()
+                ?: obj["contextLength"].positiveInt()
+                ?: obj["context_window"].positiveInt()
+                ?: obj["contextWindow"].positiveInt()
+                ?: obj["max_context_tokens"].positiveInt()
+                ?: obj["inputTokenLimit"].positiveInt()
+
+            val maxInputTokens = limitObj?.get("input").positiveInt()
+                ?: limitObj?.get("input_tokens").positiveInt()
+                ?: limitObj?.get("max_input_tokens").positiveInt()
+                ?: obj["max_input_tokens"].positiveInt()
+                ?: obj["maxInputTokens"].positiveInt()
+                ?: obj["inputTokenLimit"].positiveInt()
+
+            val maxOutputTokens = limitObj?.get("output").positiveInt()
+                ?: limitObj?.get("output_tokens").positiveInt()
+                ?: limitObj?.get("max_output_tokens").positiveInt()
+                ?: obj["max_output_tokens"].positiveInt()
+                ?: obj["maxOutputTokens"].positiveInt()
+                ?: obj["max_tokens"].positiveInt()
+                ?: obj["maxTokens"].positiveInt()
+                ?: obj["outputTokenLimit"].positiveInt()
+
+            val effortsElement = capabilitiesObj?.get("thinkingEfforts").toJsonArray()
+                ?: capabilitiesObj?.get("reasoningEfforts").toJsonArray()
+                ?: capabilitiesObj?.get("reasoning_efforts").toJsonArray()
+                ?: obj["thinkingEfforts"].toJsonArray()
+                ?: obj["reasoningEfforts"].toJsonArray()
+                ?: obj["reasoning_efforts"].toJsonArray()
+            val reasoningEfforts = effortsElement?.toStringList()
+
+            val inputModElement = modalitiesObj?.get("input").toJsonArray()
+                ?: architectureObj?.get("input_modalities").toJsonArray()
+                ?: obj["input_modalities"].toJsonArray()
+                ?: obj["inputModalities"].toJsonArray()
+                ?: obj["supportedInputModalities"].toJsonArray()
+                ?: obj["inputTypes"].toJsonArray()
+            val inputModalities = inputModElement?.toStringList()
+
+            val outputModElement = modalitiesObj?.get("output").toJsonArray()
+                ?: architectureObj?.get("output_modalities").toJsonArray()
+                ?: obj["output_modalities"].toJsonArray()
+                ?: obj["outputModalities"].toJsonArray()
+                ?: obj["supportedOutputModalities"].toJsonArray()
+                ?: obj["outputTypes"].toJsonArray()
+            val outputModalities = outputModElement?.toStringList()
+
+            return ModelMetadata(
+                contextWindow = contextWindow,
+                maxInputTokens = maxInputTokens,
+                maxOutputTokens = maxOutputTokens,
+                reasoning = reasoning,
+                temperature = temperature,
+                toolCall = toolCall,
+                promptCaching = promptCaching,
+                reasoningEfforts = reasoningEfforts,
+                inputModalities = inputModalities,
+                outputModalities = outputModalities,
+                raw = obj
+            )
+        }
+
+        private fun kotlinx.serialization.json.JsonElement?.toJsonArray(): kotlinx.serialization.json.JsonArray? =
+            this as? kotlinx.serialization.json.JsonArray
+
+        private fun kotlinx.serialization.json.JsonArray.toStringList(): List<String> =
+            mapNotNull { element ->
+                val primitive = element as? kotlinx.serialization.json.JsonPrimitive
+                if (primitive != null && primitive.isString) primitive.content else null
+            }
+
+        private fun kotlinx.serialization.json.JsonElement?.positiveInt(): Int? {
+            val primitive = this as? kotlinx.serialization.json.JsonPrimitive ?: return null
+            val num = primitive.content.toLongOrNull() ?: return null
+            return if (num > 0 && num <= Int.MAX_VALUE) num.toInt() else null
         }
     }
 }

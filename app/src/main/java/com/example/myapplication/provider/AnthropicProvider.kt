@@ -78,7 +78,7 @@ class AnthropicProvider(
         val manualBudget = effort?.takeIf {
             thinkingProtocol == ReasoningProtocol.ANTHROPIC_MANUAL
         }?.let(::anthropicBudgetFor)
-        val maxTokens = config.maxOutputTokens ?: DEFAULT_ANTHROPIC_MAX_TOKENS
+        val maxTokens = config.anthropicMaxOutputTokens()
         require(maxTokens > 0) { "maxOutputTokens must be positive" }
         require(manualBudget == null || maxTokens > manualBudget) {
             "maxOutputTokens ($maxTokens) must exceed the manual thinking budget ($manualBudget)"
@@ -239,6 +239,12 @@ class AnthropicProvider(
 
 /** Required by the Anthropic Messages API; applies only when the user left the cap empty. */
 internal const val DEFAULT_ANTHROPIC_MAX_TOKENS = 65_536
+
+/** Anthropic requires a cap; an advertised smaller maximum also bounds our default. */
+internal fun ProviderConfig.anthropicMaxOutputTokens(): Int = maxOutputTokens ?: minOf(
+    DEFAULT_ANTHROPIC_MAX_TOKENS,
+    discoveredModelMetadata[model]?.maxOutputTokens?.takeIf { it > 0 } ?: DEFAULT_ANTHROPIC_MAX_TOKENS
+)
 
 /** App-level fixed budgets; the UI shows the exact number before the request is sent. */
 internal fun anthropicBudgetFor(effort: ReasoningEffort): Int = when (effort) {

@@ -47,7 +47,8 @@ data class ProviderConfig(
     val discoveredCapabilities: Map<String, ModelCapabilities> = emptyMap(),
     val capabilityOverrides: Map<String, ModelCapabilities> = emptyMap(),
     /** Per-model context window supplied by the user when a provider does not expose it. */
-    val contextWindowOverrides: Map<String, Int> = emptyMap()
+    val contextWindowOverrides: Map<String, Int> = emptyMap(),
+    val discoveredModelMetadata: Map<String, ModelMetadata> = emptyMap()
 )
 
 /**
@@ -249,6 +250,7 @@ fun ProviderConfig.capabilitiesFor(modelId: String = model): ModelCapabilities =
 /** Returns a user supplied context window for this model, when one was configured. */
 fun ProviderConfig.contextWindowFor(modelId: String = model): Int? =
     contextWindowOverrides[modelId]?.takeIf { it > 0 }
+        ?: discoveredModelMetadata[modelId]?.contextWindow?.takeIf { it > 0 }
 
 /** Normalized provider usage. Null means the protocol did not report that value; zero is real. */
 @Serializable

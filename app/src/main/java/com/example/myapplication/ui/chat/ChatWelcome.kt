@@ -1,5 +1,7 @@
 package com.example.myapplication.ui.chat
 
+import com.example.myapplication.ui.components.AppModalBottomSheet
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
@@ -84,7 +86,7 @@ internal fun DraftAgentPicker(selected: AgentProfile?, agents: List<AgentProfile
             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, fontSize = 13.sp)
         Icon(Icons.Default.ExpandMore, null, Modifier.size(16.dp))
     }
-    if (expanded) ModalBottomSheet(onDismissRequest = { expanded = false }, containerColor = MaterialTheme.colorScheme.background) {
+    if (expanded) AppModalBottomSheet(onDismissRequest = { expanded = false }, containerColor = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 12.dp)) {
             Text("选择 Agent", style = MaterialTheme.typography.titleLarge)
             UiTextButton(onClick = { onSelect(null); expanded = false }) { Text("通用助手 · 跟随全局配置") }

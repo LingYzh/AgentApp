@@ -1,5 +1,7 @@
 package com.example.myapplication.ui.chat
 
+import com.example.myapplication.ui.components.AppModalBottomSheet
+
 import com.example.myapplication.ui.components.inertWhen
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
@@ -46,7 +48,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
@@ -186,7 +187,7 @@ internal fun ReasoningEffortMenu(
             val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
             // Material measures the sheet inside the actual window, including Android 16
             // edge-to-edge insets. A fullscreen custom Dialog overmeasured the footer.
-            ModalBottomSheet(
+            AppModalBottomSheet(
                 onDismissRequest = { draftIndex = effectiveIndex; expanded = false },
                 sheetState = sheetState,
                 dragHandle = null,
@@ -506,7 +507,7 @@ internal fun ContextUsageSheet(
             dismissButton = { UiTextButton(onClick = { confirmCompaction = false }) { Text("取消") } }
         )
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.background,
+    AppModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.background,
         sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         val estimated = overview?.estimatedTokens ?: 0L
         val maxTokens = overview?.maxTokens

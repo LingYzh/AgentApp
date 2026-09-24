@@ -1,5 +1,7 @@
 package com.example.myapplication.ui.settings
 
+import com.example.myapplication.ui.components.AppModalBottomSheet
+
 import com.example.myapplication.ui.components.inertWhen
 
 import com.example.myapplication.ui.components.UiScaffold
@@ -47,7 +49,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -446,7 +447,7 @@ fun SettingsContent(
     }
 
     if (showSubagentPicker) {
-        ModalBottomSheet(onDismissRequest = { showSubagentPicker = false }) {
+        AppModalBottomSheet(onDismissRequest = { showSubagentPicker = false }) {
             Column(
                 Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(
                     start = 22.dp,

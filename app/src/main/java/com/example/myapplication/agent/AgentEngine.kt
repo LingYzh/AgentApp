@@ -12,6 +12,7 @@ import com.example.myapplication.data.store.AttachmentStore
 import com.example.myapplication.data.store.FileStore
 import com.example.myapplication.provider.ProviderFactory
 import com.example.myapplication.provider.StreamEvent
+import com.example.myapplication.provider.anthropicMaxOutputTokens
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -217,7 +218,7 @@ class AgentEngine(
                     "stopReason" to stopReason,
                     "configuredMaxOutputTokens" to requestConfig.maxOutputTokens,
                     "effectiveMaxOutputTokens" to (requestConfig.maxOutputTokens ?: if (requestConfig.type == com.example.myapplication.data.model.ProviderType.ANTHROPIC)
-                        com.example.myapplication.provider.DEFAULT_ANTHROPIC_MAX_TOKENS else null),
+                        requestConfig.anthropicMaxOutputTokens() else null),
                     "reportedOutputTokens" to reportedUsage?.outputTokens,
                     "failed" to (error != null || stopReason.equals("error", true) ||
                         (text.isEmpty() && thinking.isEmpty() && calls.isEmpty() && cancellation == null)),
@@ -511,7 +512,8 @@ class AgentEngine(
         callbacks: Callbacks
     ) {
         if (hasIncompleteToolBatch(conversation)) return
-        val previous = conversation.messages.lastOrNull {
+        // Compacted environments are absent from the actual provider request.
+        val previous = ContextWindows.replay(conversation).lastOrNull {
             it.contextKind == ENVIRONMENT_CONTEXT_KIND && !it.excludedFromContext
         }
         if (previous?.content == environment) return
