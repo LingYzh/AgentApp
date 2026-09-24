@@ -403,7 +403,7 @@ class ChatViewModel(
                     contextCompaction = result
                 )
                 val committedOverview = withContext(Dispatchers.IO) {
-                    ContextWindows.overview(persisted, resolved, _agentProfile.value)
+                    ContextWindows.overview(persisted, resolved, _agentProfile.value, app.store.loadConfig().webSearch.isConfigured)
                 }
                 currentCoroutineContext().ensureActive()
                 // Once disk commit begins it must also update the live object, even if the
@@ -474,7 +474,7 @@ class ChatViewModel(
         contextRefreshJob?.cancel()
         contextRefreshJob = viewModelScope.launch {
             val overview = withContext(Dispatchers.IO) {
-                ContextWindows.overview(snapshot, config, _agentProfile.value)
+                ContextWindows.overview(snapshot, config, _agentProfile.value, app.store.loadConfig().webSearch.isConfigured)
             }
             _contextOverview.value = overview
         }
@@ -491,7 +491,7 @@ class ChatViewModel(
             val snapshot = source.copy(messages = _messages.value.toMutableList())
             val config = currentResolvedModel ?: return@launch
             val overview = withContext(Dispatchers.IO) {
-                ContextWindows.overview(snapshot, config, _agentProfile.value)
+                ContextWindows.overview(snapshot, config, _agentProfile.value, app.store.loadConfig().webSearch.isConfigured)
             }
             _contextOverview.value = overview
         }
@@ -1249,7 +1249,7 @@ fun ChatContent(
                 TopAppBar(
                     expandedHeight = 64.dp,
                     title = {
-                        if (isDraft) Text("AgentApp", fontSize = 20.sp)
+                        if (isDraft) Text(androidx.compose.ui.res.stringResource(com.example.myapplication.R.string.app_name_short), fontSize = 20.sp)
                         else Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis,

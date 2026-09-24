@@ -2,7 +2,6 @@ package com.example.myapplication.ui.chat
 
 import com.example.myapplication.ui.components.AppModalBottomSheet
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -15,8 +14,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -26,19 +23,15 @@ import com.example.myapplication.data.model.AgentProfile
 import com.example.myapplication.ui.agents.AgentAvatar
 import com.example.myapplication.ui.components.UiTextButton
 
-/** Native line mark, kept independent of launcher branding. */
+/** Use the supplied UAH vector at every in-app brand mark location. */
 @Composable
 internal fun AgentMark(modifier: Modifier = Modifier) {
-    Canvas(modifier.size(44.dp)) {
-        val unit = size.width / 44f
-        val path = Path().apply {
-            moveTo(5*unit, 37*unit); lineTo(21*unit, 3*unit); lineTo(27*unit, 3*unit)
-            lineTo(43*unit, 37*unit); moveTo(5*unit, 37*unit); lineTo(20*unit,37*unit)
-            moveTo(11*unit,25*unit); lineTo(33*unit,25*unit)
-            moveTo(15*unit,15*unit); lineTo(37*unit,37*unit)
-        }
-        drawPath(path, Color(0xFFD97757), style = Stroke(1.6f * unit))
-    }
+    Icon(
+        painter = androidx.compose.ui.res.painterResource(R.drawable.ic_uah_mark),
+        contentDescription = null,
+        tint = Color.Unspecified,
+        modifier = modifier.size(44.dp)
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)

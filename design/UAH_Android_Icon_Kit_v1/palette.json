@@ -1,0 +1,9 @@
+{
+  "background": "#FAF9F5",
+  "foreground": "#BE674B",
+  "ink": "#292825",
+  "optionalDarkBackground": "#272724",
+  "optionalDarkForeground": "#E5A18B",
+  "monochrome": "#000000",
+  "notification": "#FFFFFF"
+}

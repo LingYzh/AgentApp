@@ -1,0 +1,4 @@
+<!-- 合并片段，不要直接放进 res，也不要覆盖已有 strings.xml。 -->
+<string name="app_name">Used AI Harness</string>
+<string name="app_name_full" translatable="false">Used AI Harness</string>
+<string name="app_name_short" translatable="false">UAH</string>

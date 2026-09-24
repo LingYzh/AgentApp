@@ -475,6 +475,7 @@ fun AgentEditScreen(navController: NavHostController, agentId: String) {
         isNew = agentId == "new",
         initialAgent = existing,
         providers = providers,
+        searchConfigured = app.store.loadConfig().webSearch.isConfigured,
         onBack = { navController.safePopBackStack() },
         onSave = { agent ->
             vm.save(agent)
@@ -493,7 +494,8 @@ fun AgentEditContent(
     initialAgent: AgentProfile?,
     providers: List<ProviderConfig>,
     onBack: () -> Unit,
-    onSave: (AgentProfile) -> Unit
+    onSave: (AgentProfile) -> Unit,
+    searchConfigured: Boolean = false
 ) {
     val context = LocalContext.current
     val isPreview = androidx.compose.ui.platform.LocalInspectionMode.current
@@ -504,9 +506,10 @@ fun AgentEditContent(
     var emoji by remember { mutableStateOf(initialAgent?.emoji ?: "🤖") }
     var avatarPath by remember { mutableStateOf(initialAgent?.avatarPath) }
     var showEmojiPicker by remember { mutableStateOf(false) }
+    val selectableTools = Tools.ALL_NAMES.filter { it != Tools.SEARCH || searchConfigured }.toSet()
     var allowAllTools by remember { mutableStateOf(initialAgent?.tools.isNullOrEmpty()) }
     var selectedTools by remember {
-        mutableStateOf(initialAgent?.tools?.takeIf { it.isNotEmpty() }?.toSet() ?: Tools.ALL_NAMES)
+        mutableStateOf(initialAgent?.tools?.takeIf { it.isNotEmpty() }?.toSet() ?: selectableTools)
     }
     var description by remember { mutableStateOf(initialAgent?.description ?: "") }
     var systemPrompt by remember { mutableStateOf(initialAgent?.systemPrompt ?: "") }
@@ -715,7 +718,7 @@ fun AgentEditContent(
                     .clickable {
                         allowAllTools = !allowAllTools
                         if (!allowAllTools && selectedTools.isEmpty()) {
-                            selectedTools = Tools.ALL_NAMES.toSet()
+                            selectedTools = selectableTools
                         }
                     }
                     .padding(vertical = 11.dp),
@@ -734,7 +737,7 @@ fun AgentEditContent(
                     onCheckedChange = { enabled ->
                         allowAllTools = enabled
                         if (!enabled && selectedTools.isEmpty()) {
-                            selectedTools = Tools.ALL_NAMES.toSet()
+                            selectedTools = selectableTools
                         }
                     }
                 )
@@ -745,7 +748,7 @@ fun AgentEditContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            } else {
+            }
             // 可用工具集配置卡片
             Card(
                 shape = ExpressiveTokens.CardShape,
@@ -765,7 +768,7 @@ fun AgentEditContent(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "可用工具集权限 (${selectedTools.size}/${Tools.ALL_NAMES.size})",
+                            "可用工具集权限 (${if (allowAllTools) selectableTools.size else selectedTools.count { it in selectableTools }}/${selectableTools.size})",
                             style = MaterialTheme.typography.titleSmall
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -774,7 +777,8 @@ fun AgentEditContent(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.clickable {
-                                    selectedTools = Tools.ALL_NAMES.toSet()
+                                    allowAllTools = false
+                                    selectedTools = selectableTools
                                 }
                             )
                             Text(
@@ -794,6 +798,8 @@ fun AgentEditContent(
                     )
                     Spacer(Modifier.height(4.dp))
                     val toolDescriptions = mapOf(
+                        Tools.FETCH to ("读取网页 fetch" to "获取网页与文本，不依赖搜索服务"),
+                        Tools.SEARCH to ("联网搜索 search" to if (searchConfigured) "使用全局配置的搜索服务" else "未配置或已停用，请先在抽屉的网络搜索服务中配置"),
                         Tools.WRITE_FILE to ("写入文件" to "创建或覆盖工作区文本文件"),
                         Tools.EDIT_FILE to ("编辑文件" to "精确替换文件中的指定文本"),
                         Tools.DELETE_FILE to ("删除文件" to "仅删除单个文件；Accept Edit 每次确认，Plan/Readonly 禁止"),
@@ -811,30 +817,29 @@ fun AgentEditContent(
                     )
                     Tools.ALL_NAMES.filterNot { it == Tools.GET_SESSION_STATE }.forEach { toolName ->
                         val (label, desc) = toolDescriptions[toolName] ?: (toolName to "")
-                        val isChecked = toolName in selectedTools
+                        val available = toolName != Tools.SEARCH || searchConfigured
+                        fun setToolChecked(checked: Boolean) {
+                            val current = if (allowAllTools) selectableTools else selectedTools
+                            allowAllTools = false
+                            selectedTools = when {
+                                checked -> current + toolName
+                                current.size > 1 -> current - toolName
+                                else -> current
+                            }
+                        }
+                        val isChecked = available && (allowAllTools || toolName in selectedTools)
                         Row(
                             Modifier
                                 .fillMaxWidth()
                                 .clip(ExpressiveTokens.CardShape)
-                                .clickable {
-                                    selectedTools = when {
-                                        !isChecked -> selectedTools + toolName
-                                        selectedTools.size > 1 -> selectedTools - toolName
-                                        else -> selectedTools
-                                    }
-                                }
+                                .clickable(enabled = available) { setToolChecked(!isChecked) }
                                 .padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Checkbox(
                                 checked = isChecked,
-                                onCheckedChange = { checked ->
-                                    selectedTools = when {
-                                        checked -> selectedTools + toolName
-                                        selectedTools.size > 1 -> selectedTools - toolName
-                                        else -> selectedTools
-                                    }
-                                }
+                                enabled = available,
+                                onCheckedChange = ::setToolChecked
                             )
                             Column(Modifier.padding(start = 4.dp)) {
                                 Text(label, style = MaterialTheme.typography.bodyMedium)
@@ -849,7 +854,6 @@ fun AgentEditContent(
                         }
                     }
                 }
-            }
             }
             }
 

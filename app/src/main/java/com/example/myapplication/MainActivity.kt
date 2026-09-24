@@ -117,6 +117,7 @@ object Routes {
     const val CONVERSATIONS = "conversations"
     const val CHAT = "chat/{conversationId}?session={session}"
     const val SESSION = "session/{conversationId}"
+    const val WEB_SEARCH = "webSearch"
     const val PROVIDERS = "providers"
     const val PROVIDER_EDIT = "providerEdit/{providerId}"
     const val FILES = "files"
@@ -145,6 +146,7 @@ val TopLevelRoutes = setOf(
     Routes.CONVERSATIONS,
     Routes.AGENTS,
     Routes.PROVIDERS,
+    Routes.WEB_SEARCH,
     Routes.FILES,
     Routes.MEMORY,
     Routes.SKILLS,
@@ -321,6 +323,7 @@ fun AppRoot() {
                         sessionKey = backStack.arguments?.getString("session") ?: requireNotNull(backStack.arguments?.getString("conversationId"))
                     )
                 }
+                composable(Routes.WEB_SEARCH) { com.example.myapplication.ui.settings.WebSearchScreen(openDrawer) }
                 composable(Routes.PROVIDERS) { ProvidersScreen(navController, openDrawer) }
                 composable(Routes.SESSION,
                     arguments = listOf(navArgument("conversationId") { type = NavType.StringType })
@@ -408,6 +411,7 @@ fun AppDrawerSheetContent(
     onClose: () -> Unit = {}
 ) {
     val entries = listOf(
+        DrawerEntry(Routes.WEB_SEARCH, "网络搜索服务", Icons.Outlined.Search),
         DrawerEntry(Routes.AGENTS, "Agents", Icons.Outlined.SmartToy),
         DrawerEntry(Routes.FILES, "工作区文件", Icons.Outlined.Folder),
         DrawerEntry(Routes.SKILLS, "Skills", Icons.Outlined.Inventory2),
@@ -417,7 +421,7 @@ fun AppDrawerSheetContent(
     Column(Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.background).navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            Text("AgentApp", Modifier.weight(1f), fontSize = 19.sp, fontWeight = FontWeight.Medium)
+            Text(androidx.compose.ui.res.stringResource(com.example.myapplication.R.string.app_name_short), Modifier.weight(1f), fontSize = 19.sp, fontWeight = FontWeight.Medium)
             IconButton(onClick = onClose) { Icon(Icons.Default.Close, "关闭导航", Modifier.size(20.dp)) }
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {

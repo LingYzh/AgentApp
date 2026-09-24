@@ -1,0 +1,951 @@
+{
+  "kind": "offline-resource-validation",
+  "all_passed": true,
+  "checks_total": 188,
+  "checks_passed": 188,
+  "checks": [
+    {
+      "check": "android-runtime-count",
+      "passed": true,
+      "detail": "19"
+    },
+    {
+      "check": "mdpi/ic_launcher dimensions",
+      "passed": true,
+      "detail": "(48, 48)"
+    },
+    {
+      "check": "mdpi/ic_launcher RGBA",
+      "passed": true,
+      "detail": "RGBA"
+    },
+    {
+      "check": "mdpi/ic_launcher transparent corner",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "mdpi/ic_launcher_round dimensions",
+      "passed": true,
+      "detail": "(48, 48)"
+    },
+    {
+      "check": "mdpi/ic_launcher_round RGBA",
+      "passed": true,
+      "detail": "RGBA"
+    },
+    {
+      "check": "mdpi/ic_launcher_round transparent corner",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-mdpi-foreground size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-mdpi-foreground alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-mdpi-background size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-mdpi-background alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-mdpi-monochrome size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-mdpi-monochrome alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "hdpi/ic_launcher dimensions",
+      "passed": true,
+      "detail": "(72, 72)"
+    },
+    {
+      "check": "hdpi/ic_launcher RGBA",
+      "passed": true,
+      "detail": "RGBA"
+    },
+    {
+      "check": "hdpi/ic_launcher transparent corner",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "hdpi/ic_launcher_round dimensions",
+      "passed": true,
+      "detail": "(72, 72)"
+    },
+    {
+      "check": "hdpi/ic_launcher_round RGBA",
+      "passed": true,
+      "detail": "RGBA"
+    },
+    {
+      "check": "hdpi/ic_launcher_round transparent corner",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-hdpi-foreground size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-hdpi-foreground alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-hdpi-background size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-hdpi-background alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-hdpi-monochrome size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-hdpi-monochrome alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "xhdpi/ic_launcher dimensions",
+      "passed": true,
+      "detail": "(96, 96)"
+    },
+    {
+      "check": "xhdpi/ic_launcher RGBA",
+      "passed": true,
+      "detail": "RGBA"
+    },
+    {
+      "check": "xhdpi/ic_launcher transparent corner",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "xhdpi/ic_launcher_round dimensions",
+      "passed": true,
+      "detail": "(96, 96)"
+    },
+    {
+      "check": "xhdpi/ic_launcher_round RGBA",
+      "passed": true,
+      "detail": "RGBA"
+    },
+    {
+      "check": "xhdpi/ic_launcher_round transparent corner",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xhdpi-foreground size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xhdpi-foreground alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xhdpi-background size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xhdpi-background alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xhdpi-monochrome size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xhdpi-monochrome alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "xxhdpi/ic_launcher dimensions",
+      "passed": true,
+      "detail": "(144, 144)"
+    },
+    {
+      "check": "xxhdpi/ic_launcher RGBA",
+      "passed": true,
+      "detail": "RGBA"
+    },
+    {
+      "check": "xxhdpi/ic_launcher transparent corner",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "xxhdpi/ic_launcher_round dimensions",
+      "passed": true,
+      "detail": "(144, 144)"
+    },
+    {
+      "check": "xxhdpi/ic_launcher_round RGBA",
+      "passed": true,
+      "detail": "RGBA"
+    },
+    {
+      "check": "xxhdpi/ic_launcher_round transparent corner",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xxhdpi-foreground size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xxhdpi-foreground alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xxhdpi-background size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xxhdpi-background alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xxhdpi-monochrome size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xxhdpi-monochrome alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "xxxhdpi/ic_launcher dimensions",
+      "passed": true,
+      "detail": "(192, 192)"
+    },
+    {
+      "check": "xxxhdpi/ic_launcher RGBA",
+      "passed": true,
+      "detail": "RGBA"
+    },
+    {
+      "check": "xxxhdpi/ic_launcher transparent corner",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "xxxhdpi/ic_launcher_round dimensions",
+      "passed": true,
+      "detail": "(192, 192)"
+    },
+    {
+      "check": "xxxhdpi/ic_launcher_round RGBA",
+      "passed": true,
+      "detail": "RGBA"
+    },
+    {
+      "check": "xxxhdpi/ic_launcher_round transparent corner",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xxxhdpi-foreground size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xxxhdpi-foreground alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xxxhdpi-background size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xxxhdpi-background alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xxxhdpi-monochrome size",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-xxxhdpi-monochrome alpha",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-1024.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-1024.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-144.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-144.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-192.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-192.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-256.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-256.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-48.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-48.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-512.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-512.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-72.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-72.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-96.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-96.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-dark-1024.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-dark-1024.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-dark-512.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-dark-512.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-round-144.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-round-144.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-round-192.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-round-192.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-round-48.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-round-48.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-round-512.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-round-512.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-round-72.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-round-72.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-round-96.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-round-96.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-square-1024.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-square-1024.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-square-512.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon-square-512.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-charcoal-1024.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-charcoal-1024.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-charcoal-1024.png genuine transparency",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-charcoal-512.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-charcoal-512.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-charcoal-512.png genuine transparency",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-1024.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-1024.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-1024.png genuine transparency",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-128.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-128.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-128.png genuine transparency",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-192.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-192.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-192.png genuine transparency",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-24.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-24.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-24.png genuine transparency",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-256.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-256.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-256.png genuine transparency",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-32.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-32.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-32.png genuine transparency",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-48.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-48.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-48.png genuine transparency",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-512.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-512.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-512.png genuine transparency",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-64.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-64.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-64.png genuine transparency",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-96.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-96.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-transparent-96.png genuine transparency",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-white-1024.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-white-1024.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-white-1024.png genuine transparency",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-white-512.png dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-white-512.png sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-white-512.png genuine transparency",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_stat_uah.xml vector",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_stat_uah.xml identical source paths",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_stat_uah.xml group scale",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_uah_background.xml vector",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_uah_background.xml 108dp viewport",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_uah_foreground.xml vector",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_uah_foreground.xml identical source paths",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_uah_foreground.xml group scale",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_uah_foreground.xml 108dp viewport",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_uah_mark.xml vector",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_uah_mark.xml identical source paths",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_uah_mark.xml group scale",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_uah_monochrome.xml vector",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_uah_monochrome.xml identical source paths",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_uah_monochrome.xml group scale",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "ic_uah_monochrome.xml 108dp viewport",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "mipmap-anydpi-v26/ic_launcher.xml adaptive root",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "mipmap-anydpi-v26/ic_launcher/background reference",
+      "passed": true,
+      "detail": "@drawable/ic_uah_background"
+    },
+    {
+      "check": "mipmap-anydpi-v26/ic_launcher/foreground reference",
+      "passed": true,
+      "detail": "@drawable/ic_uah_foreground"
+    },
+    {
+      "check": "mipmap-anydpi-v26/ic_launcher.xml mono API",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "mipmap-anydpi-v26/ic_launcher_round.xml adaptive root",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "mipmap-anydpi-v26/ic_launcher_round/background reference",
+      "passed": true,
+      "detail": "@drawable/ic_uah_background"
+    },
+    {
+      "check": "mipmap-anydpi-v26/ic_launcher_round/foreground reference",
+      "passed": true,
+      "detail": "@drawable/ic_uah_foreground"
+    },
+    {
+      "check": "mipmap-anydpi-v26/ic_launcher_round.xml mono API",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "mipmap-anydpi-v33/ic_launcher.xml adaptive root",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "mipmap-anydpi-v33/ic_launcher/background reference",
+      "passed": true,
+      "detail": "@drawable/ic_uah_background"
+    },
+    {
+      "check": "mipmap-anydpi-v33/ic_launcher/foreground reference",
+      "passed": true,
+      "detail": "@drawable/ic_uah_foreground"
+    },
+    {
+      "check": "mipmap-anydpi-v33/ic_launcher/monochrome reference",
+      "passed": true,
+      "detail": "@drawable/ic_uah_monochrome"
+    },
+    {
+      "check": "mipmap-anydpi-v33/ic_launcher.xml mono API",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "mipmap-anydpi-v33/ic_launcher_round.xml adaptive root",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "mipmap-anydpi-v33/ic_launcher_round/background reference",
+      "passed": true,
+      "detail": "@drawable/ic_uah_background"
+    },
+    {
+      "check": "mipmap-anydpi-v33/ic_launcher_round/foreground reference",
+      "passed": true,
+      "detail": "@drawable/ic_uah_foreground"
+    },
+    {
+      "check": "mipmap-anydpi-v33/ic_launcher_round/monochrome reference",
+      "passed": true,
+      "detail": "@drawable/ic_uah_monochrome"
+    },
+    {
+      "check": "mipmap-anydpi-v33/ic_launcher_round.xml mono API",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-square.svg pure paths/no embedded media",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark.svg pure paths/no embedded media",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-icon.svg pure paths/no embedded media",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "uah-mark-white.svg pure paths/no embedded media",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-monochrome.svg pure paths/no embedded media",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-background.svg pure paths/no embedded media",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "adaptive-foreground.svg pure paths/no embedded media",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "foreground-monochrome-alpha-equal",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "foreground-inside-central-66dp-circle",
+      "passed": true,
+      "detail": "32.706dp radius"
+    },
+    {
+      "check": "foreground-within-66dp-square",
+      "passed": true,
+      "detail": "[30.375, 29.625, 77.625, 78.375]"
+    },
+    {
+      "check": "store-512-square",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "store-opaque-full-square",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "store-32-bit-RGBA-sRGB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "store-under-1024KB",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "check": "no-font-files",
+      "passed": true,
+      "detail": ""
+    }
+  ],
+  "android_apk_build": "not performed",
+  "device_test": "not performed",
+  "github_write": "not performed"
+}

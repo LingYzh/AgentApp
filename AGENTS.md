@@ -61,3 +61,7 @@
 - 模型目录完整声明保存在 `discoveredModelMetadata`，包含规范化容量/思考等字段及 raw 原文。手动上下文覆盖优先于接口容量；明确思考 false/档位列表参与会话选择，缺失时保留原协议规则。厂商任意 schemaPath 仅展示，不自动变更协议；输入与输出能力不可互相推导。目录刷新后由供应商页“保存”持久化。
 
 - 底部弹层统一用 AppModalBottomSheet：列表边缘滚动与长按后的内容拖动不得传给弹层；保留顶部把手关闭。Main pass 消费移动前须越过 touchSlop，否则会取消子列表起滑。恢复接口模型声明时同时清除能力覆盖、上下文覆盖和上下文输入草稿。
+
+- 网络搜索使用 AppConfig.webSearch 中的全局当前服务（SearXNG、SerpApi、Brave、Tavily、Exa、Google Custom Search 存量接口）；Agent 仅控制 search 工具授权。服务未配置/停用时 UI 禁用 search，ToolExecutor 同时过滤声明并拒绝执行；fetch 独立可用。网络正文限制大小和时间，取消必须贯穿响应体读取，不共享模型密钥或浏览器登录状态。
+
+- 品牌显示为 Used AI Harness / UAH，使用 design/UAH_Android_Icon_Kit_v1 原始资源；保持 applicationId、包名、存档协议和签名不变。搜索配置按服务独立保留，仅调用当前服务，不自动回退；旧 baseUrl 配置按 SearXNG 读取。

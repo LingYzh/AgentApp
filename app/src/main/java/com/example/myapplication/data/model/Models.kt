@@ -285,7 +285,8 @@ data class AppConfig(
     val subagentModel: String? = null,
     /** 外观：system / light / dark */
     val themeMode: String = "system",
-    val autoApprovedCommands: List<String> = emptyList()
+    val autoApprovedCommands: List<String> = emptyList(),
+    val webSearch: WebSearchConfig = WebSearchConfig()
 ) {
     val selectedProvider: ProviderConfig?
         get() = providers.firstOrNull { it.id == selectedProviderId } ?: providers.firstOrNull()

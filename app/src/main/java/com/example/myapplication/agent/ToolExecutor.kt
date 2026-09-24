@@ -25,6 +25,8 @@ class ToolExecutor(
     private val permissionSession: PermissionSession = PermissionSession(store, com.example.myapplication.data.model.Conversation(), PermissionCoordinator()),
     private val commandExecutor: suspend (String, String) -> String = ShellCommandRunner::run
 ) {
+    private val webTools by lazy { WebTools() }
+
     /** Session lifecycle controls accompany file-writing capabilities, including old profiles. */
     fun specs(): List<ToolSpec> {
         val includePlanControls = !permissionSession.isChild &&
@@ -34,7 +36,8 @@ class ToolExecutor(
         .filter { spec ->
             (allowedTools == null || spec.name in allowedTools || spec.name == Tools.GET_SESSION_STATE ||
                 (includePlanControls && spec.name in setOf(Tools.ENTER_PLAN_MODE, Tools.EXIT_PLAN_MODE))) &&
-                (spec.name != Tools.RUN_SUBAGENT || onRunSubagent != null)
+                (spec.name != Tools.RUN_SUBAGENT || onRunSubagent != null) &&
+                (spec.name != Tools.SEARCH || store.loadConfig().webSearch.isConfigured)
         }
     }
 
@@ -67,6 +70,8 @@ class ToolExecutor(
         fun arg(key: String): String = args[key]?.jsonPrimitive?.content ?: ""
         return try {
             when (name) {
+                Tools.FETCH -> webTools.fetch(arg("url"))
+                Tools.SEARCH -> webTools.search(store.loadConfig().webSearch, arg("query"))
                 Tools.WRITE_FILE -> writeFile(arg("path"), arg("content"))
                 Tools.EDIT_FILE -> editFile(arg("path"), arg("old_text"), arg("new_text"))
                 Tools.DELETE_FILE -> FileDeletion(permissionSession).delete(arg("path"))
