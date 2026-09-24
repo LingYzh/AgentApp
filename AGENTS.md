@@ -4,11 +4,11 @@
 
 - 完善 Android 移动端 harness，并尽可能支持用户授权的设备操作。
 - 用户自用，不计划上架应用商店。
-- 目标设备为 Nubia NX809J，Android 16 / API 36；通过无线调试连接本机。尚无 root 或 Shizuku，用户有后续增强控制权限的需求。
+- 目标设备为 Nubia NX809J，Android 16 / API 36；通过无线调试连接本机。已安装 Shizuku，启动和授权由用户操作；尚无 root。
 - 测试流程由用户执行；代理负责准备待测 App 构建版本、测试文件、必要环境和简短操作说明，当前实机体验问题优先询问用户。
 - APK 交付时只要 ADB 中发现已授权的手机，默认直接安装：先覆盖安装保留数据；如签名冲突，用户已授权卸载旧版后重装（会清除旧版数据）。同一手机多个 ADB 连接只安装一次；此授权不包含自动操作界面或执行实机测试。
 - 默认不再自行操作手机进行测试、自动化点击或创建/删除测试数据；用户另行明确要求代测时再执行。构建与静态检查可作为交付准备。
-- 当前第一阶段优先完善聊天与 harness 稳定性；设备控制、Shizuku 和 root 接入后续推进。
+- 已接入第一版无障碍 + Shizuku 本机设备控制；当前允许代理在 Android Studio 模拟器自动验收，实机仍由用户测试。root 后续推进。
 
 ## 构建与验证
 
@@ -42,13 +42,16 @@
 - NEW_CHAT 是主界面，SavedStateHandle 保存当前草稿/历史会话选择；首发通过 FileStore.commitDraft 保存会话和首条消息后原地显示聊天，不导航到 CHAT，不创建空历史。抽屉“新对话”替换为新草稿，历史选择在主界面打开；CHAT 保留给子会话详情。
 - 新会话配置用 new-chat-defaults.json 保存 Agent/模型/具体思考档位/权限模式/工作目录/目录范围；草稿调整立即记忆，历史调整不影响默认，正文附件不继承。首次思考 medium，无该档则取支持列表中位档；Provider 不再配置默认思考强度。
 - Conversation.workingDirectory 决定相对文件路径和空命令 cwd，null 使用 App workspace；文件工具范围是工作目录与 allowedDirectories 额外目录的并集，额外目录留空仅访问工作目录。Shell 不受该目录范围约束，继续按权限模式审批。保留 canonical 路径边界、附件工作区引用和 Plan 专用文件规则。
-- ChatSessions 在 Activity 的 ViewModel 内持有 ChatViewModel；首发和从历史重开复用同一执行任务。Activity 最终销毁会取消任务，尚无独立后台任务服务。
+- ChatSessions 通过 Application 的 ChatSessionPool 复用 ChatViewModel。发送时启用设备控制的任务由 DeviceTaskService 前台服务保活，Activity 销毁后仍可接回原会话；普通任务保留原销毁取消规则。进程被杀后不自动续跑。
 - 会话面板使用 `session/{conversationId}` 独立页面，复用 ChatSessions；前台路由独占审批和错误提示。产物来自成功写入/编辑的保存快照，查看历史 Diff 与打开当前文件分离。
 - 草稿/输入/附件引用通过 SavedStateHandle 恢复；旋转、外部选择器和后台返回不重置导航。工具详情只使用对应调用记录与已保存快照，不重读文件冒充历史。
 - 会话顶栏标题在上、Agent 名称在下；模型选择仅保留在输入框。反馈横幅悬浮于顶栏下方，不占正文高度（用户修订优先于原型旧占位要求）。
 - 取消必须贯穿网络读取、工具和子代理；不得将 CancellationException 转为普通工具错误。
 - 导航列表在 STARTED 阶段刷新，避免等待入场动画结束后才加载；圆角卡片使用 Card 自身的 onClick 处理 ripple。
-- 当前没有无障碍服务、截图、通知监听、Shizuku 或 root 执行实现。
+- 设备控制提供 status/observe/action/screenshot/system 工具；全局开关默认关闭，叠加 Agent 工具授权与会话权限。Readonly/Plan 禁止设备写操作，Accept Edit 单次审批，Auto 连续执行。无障碍优先控件操作，截图经原附件管线输入模型；Shizuku 仅固定系统操作，无任意特权 shell。尚无通知监听或 root 实现。
+- 屏幕租约按父会话独占，父子代理共享；动作使用 snapshot/window/package/version 校验，失效需重新观察。取消向手势与 Binder 请求传播，未确认完成的特权任务隔离后续操作。无障碍悬浮层提供审批与停止，观察排除自身覆盖层。
+- 网络搜索服务与设备控制统一从设置主页“搜索与设备”进入，不再作为抽屉一级入口；子页返回设置。设备控制提供 Shizuku 官方下载页入口。
+- 设备控制/搜索设置子页复用 SettingsSectionCard；连接状态与错误归对应栏目，模型连接测试结果在测试按钮附近。工具原始记录展示必须限制单行布局宽度/长度，超长行仅显示分段，保留完整存档及复制内容，防止 Compose Constraints 越界。
 - 代码使用四空格缩进，添加必要注释，避免提前抽象。
 - 手动深浅色覆盖须同步 Activity 的 SystemBarStyle；不能让状态栏/导航栏图标继续只跟随系统主题。
 - 思考档位详情点选后立即应用并回到滑块，不设置返回滑块底部按钮；弹层系统栏也跟随 App 手动主题。

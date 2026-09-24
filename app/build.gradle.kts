@@ -64,6 +64,10 @@ dependencies {
     implementation("com.atlassian.commonmark:commonmark-ext-gfm-tables:0.13.0")
     implementation("com.atlassian.commonmark:commonmark-ext-gfm-strikethrough:0.13.0")
 
+    // Shizuku privileged service API
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
+
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)

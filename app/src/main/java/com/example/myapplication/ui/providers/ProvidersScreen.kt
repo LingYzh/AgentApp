@@ -820,6 +820,18 @@ fun ProviderEditContent(
                     color = MaterialTheme.colorScheme.error
                 )
             }
+            testResult?.let {
+                Card(
+                    shape = ExpressiveTokens.CardShape,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                    ),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(it, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
+                }
+            }
 
             ProviderExpandableSection(
                 title = "模型列表",
@@ -979,19 +991,6 @@ fun ProviderEditContent(
                     label = { Text("SSE 行提取路径，如 $.choices[0].delta.content") }, singleLine = true
                 )
             }
-            }
-
-            testResult?.let {
-                Card(
-                    shape = ExpressiveTokens.CardShape,
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(it, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
-                }
             }
             Spacer(modifier = Modifier.height(24.dp))
         }

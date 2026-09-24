@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
-enum class PermissionRequestKind { COMMAND, PLAN, FILE_DELETE }
+enum class PermissionRequestKind { COMMAND, PLAN, FILE_DELETE, DEVICE_ACTION }
 
 enum class PermissionDecision { DENY, ALLOW_ONCE, ALLOW_ALWAYS, FEEDBACK, ACCEPT_AUTO, ACCEPT_EDIT }
 

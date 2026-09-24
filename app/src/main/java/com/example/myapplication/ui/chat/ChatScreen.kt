@@ -204,6 +204,8 @@ class ChatViewModel(
     val workingDirectory = _workingDirectory.asStateFlow()
     private var agents: List<AgentProfile> = emptyList()
     private var generationJob: Job? = null
+    internal var deviceTaskActive = false
+        private set
     private var modelSaveJob: Job? = null
     private var compactJob: Job? = null
     private var contextRefreshJob: Job? = null
@@ -680,7 +682,9 @@ class ChatViewModel(
         _playbackInterrupted.value = false
         _streaming.value = true
         _error.value = null
-        generationJob = viewModelScope.launch {
+        val deviceTaskToken = java.util.UUID.randomUUID().toString()
+        val keepAlive = app.deviceController.enabled
+        generationJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             var committed = false
             try {
                 modelSaveJob?.join()
@@ -738,7 +742,7 @@ class ChatViewModel(
                 }
                 currentCoroutineContext().ensureActive()
                 refreshContextOverview(resolved = resolved)
-                val engine = app.newAgentEngine(onSubagentStatus = { _toolStatus.value = it })
+                val engine = app.newAgentEngine(onSubagentStatus = { _toolStatus.value = it }, allowDeviceControl = keepAlive)
                 withContext(Dispatchers.IO) {
                     engine.run(
                         conversation = conv,
@@ -782,10 +786,22 @@ class ChatViewModel(
                     _streaming.value = false
                     _toolStatus.value = null
                     _messages.value = conv.messages.toList()
+                    if (keepAlive) com.example.myapplication.agent.DeviceTaskService.finish(deviceTaskToken)
+                    deviceTaskActive = false
                 }
                 val appConfig = withContext(Dispatchers.IO) { app.store.loadConfig() }
                 refreshContextOverview(resolved = ModelResolver.resolve(conv, appConfig, agents))
             }
+        }
+        try {
+            if (keepAlive) com.example.myapplication.agent.DeviceTaskService.register(app, deviceTaskToken, generationJob!!)
+            deviceTaskActive = keepAlive
+            generationJob!!.start()
+        } catch (e: Exception) {
+            generationJob?.cancel()
+            deviceTaskActive = false
+            _streaming.value = false
+            _error.value = "无法启动设备任务：${e.message}"
         }
     }
 

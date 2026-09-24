@@ -21,6 +21,9 @@ class AgentApp : Application() {
     )
     val subagentRegistry = SubagentRegistry()
     val permissionCoordinator = com.example.myapplication.agent.PermissionCoordinator()
+    val chatSessionPool = com.example.myapplication.ui.chat.ChatSessionPool()
+    val deviceController by lazy { com.example.myapplication.device.DeviceController(this) }
+    val deviceTools by lazy { com.example.myapplication.agent.AndroidDeviceTools(deviceController) }
 
     lateinit var store: FileStore
         private set
@@ -80,9 +83,10 @@ class AgentApp : Application() {
     }
 
     /** 每次调用构造一个新的引擎 */
-    fun newAgentEngine(onSubagentStatus: (String) -> Unit = {}): AgentEngine {
-        val runner = SubagentRunner(store, providerFactory, onSubagentStatus, subagentRegistry)
-        return AgentEngine(store, providerFactory, runner)
+    fun newAgentEngine(onSubagentStatus: (String) -> Unit = {}, allowDeviceControl: Boolean = deviceController.enabled): AgentEngine {
+        val tools = deviceTools.takeIf { allowDeviceControl }
+        val runner = SubagentRunner(store, providerFactory, onSubagentStatus, subagentRegistry, tools)
+        return AgentEngine(store, providerFactory, runner, tools)
     }
 
     companion object {

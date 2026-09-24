@@ -37,7 +37,8 @@ fun InlineCodePanel(title: String, text: String, emptyLabel: String = "本次命
     var copied by remember(text) { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
     val horizontal = rememberScrollState()
-    val lines = remember(text) { text.split('\n') }
+    val lines = remember(text) { codeDisplayLines(text) }
+    val segmented = remember(text) { text.lineSequence().any { it.length > 512 } }
     Surface(color = codeSurfaceColor(), shape = MaterialTheme.shapes.small) {
         Column {
             Row(
@@ -58,14 +59,19 @@ fun InlineCodePanel(title: String, text: String, emptyLabel: String = "本次命
                     }
                 }
             }
+            if (segmented) Text("超长行已分段显示，复制保留原文", Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (text.isEmpty()) {
                 Text(emptyLabel, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else SelectionContainer {
                 BoxWithConstraints(Modifier.fillMaxWidth().animateContentSize(tween(240))) {
                     val longest = remember(text) { lines.maxOfOrNull(::codeColumns) ?: 0 }
-                    val width = if (wrap) maxWidth else maxOf(maxWidth,
-                        with(LocalDensity.current) { (longest * 8).sp.toDp() } + 24.dp)
+                    // Compose packs width/height into a bounded Constraints value. Never
+                    // turn an unbounded JSON line into an equally unbounded layout width.
+                    val safeWidth = with(LocalDensity.current) { 8190.toDp() }
+                    val width = (if (wrap) maxWidth else maxOf(maxWidth,
+                        with(LocalDensity.current) { (longest * 8).sp.toDp() } + 24.dp)).coerceAtMost(safeWidth)
                     Box(if (wrap) Modifier else Modifier.horizontalScroll(horizontal)) {
                         LazyColumn(
                             Modifier.width(width).heightIn(max = if (tall) 520.dp else 238.dp),
@@ -73,7 +79,7 @@ fun InlineCodePanel(title: String, text: String, emptyLabel: String = "本次命
                         ) {
                             itemsIndexed(lines) { _, line ->
                                 Text(line, fontFamily = FontFamily.Monospace, fontSize = 12.sp,
-                                    lineHeight = 22.sp, softWrap = wrap)
+                                    lineHeight = 22.sp, softWrap = wrap || width == safeWidth)
                             }
                         }
                     }
@@ -110,8 +116,11 @@ fun ToolRecordPanel(
     var copied by remember(command, rawCommandFallback, output) { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
     val originalCommand = command ?: rawCommandFallback.orEmpty()
-    val commandLines = remember(originalCommand) { originalCommand.split('\n') }
-    val outputLines = remember(output) { output?.split('\n').orEmpty() }
+    val commandLines = remember(originalCommand) { codeDisplayLines(originalCommand) }
+    val outputLines = remember(output) { output?.let(::codeDisplayLines).orEmpty() }
+    val segmented = remember(originalCommand, output) {
+        sequenceOf(originalCommand, output.orEmpty()).any { value -> value.lineSequence().any { it.length > 512 } }
+    }
     val horizontal = rememberScrollState()
     val copyText = remember(originalCommand, output) {
         buildString {
@@ -153,12 +162,15 @@ fun ToolRecordPanel(
                     }
                 }
             }
+            if (segmented) Text("超长行已分段显示，复制保留原文", Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             BoxWithConstraints(Modifier.fillMaxWidth().animateContentSize(tween(240))) {
                 val longest = remember(commandLines, outputLines) {
                     (commandLines + outputLines).maxOfOrNull(::codeColumns) ?: 0
                 }
-                val width = if (wrap) maxWidth else maxOf(maxWidth,
-                    with(LocalDensity.current) { (longest * 8).sp.toDp() } + 28.dp)
+                val safeWidth = with(LocalDensity.current) { 8190.toDp() }
+                val width = (if (wrap) maxWidth else maxOf(maxWidth,
+                    with(LocalDensity.current) { (longest * 8).sp.toDp() } + 28.dp)).coerceAtMost(safeWidth)
                 Box(if (wrap) Modifier else Modifier.horizontalScroll(horizontal)) {
                     SelectionContainer {
                         LazyColumn(
@@ -176,7 +188,7 @@ fun ToolRecordPanel(
                                 itemsIndexed(commandLines) { _, line ->
                                     Text(if (!isShell || command == null) line else "$ " + line, color = MaterialTheme.colorScheme.onSurface,
                                         fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 22.sp,
-                                        softWrap = wrap)
+                                        softWrap = wrap || width == safeWidth)
                                 }
                             }
                             if (!isShell) item { Text("回参", Modifier.padding(top = 16.dp, bottom = 8.dp),
@@ -202,7 +214,7 @@ fun ToolRecordPanel(
                                     itemsIndexed(outputLines) { _, line ->
                                         Text(line, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 22.sp,
-                                            softWrap = wrap)
+                                            softWrap = wrap || width == safeWidth)
                                     }
                                 }
                             }

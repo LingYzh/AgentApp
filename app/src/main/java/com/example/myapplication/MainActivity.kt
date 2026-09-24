@@ -118,6 +118,7 @@ object Routes {
     const val CHAT = "chat/{conversationId}?session={session}"
     const val SESSION = "session/{conversationId}"
     const val WEB_SEARCH = "webSearch"
+    const val DEVICE_CONTROL = "deviceControl"
     const val PROVIDERS = "providers"
     const val PROVIDER_EDIT = "providerEdit/{providerId}"
     const val FILES = "files"
@@ -146,7 +147,6 @@ val TopLevelRoutes = setOf(
     Routes.CONVERSATIONS,
     Routes.AGENTS,
     Routes.PROVIDERS,
-    Routes.WEB_SEARCH,
     Routes.FILES,
     Routes.MEMORY,
     Routes.SKILLS,
@@ -323,7 +323,12 @@ fun AppRoot() {
                         sessionKey = backStack.arguments?.getString("session") ?: requireNotNull(backStack.arguments?.getString("conversationId"))
                     )
                 }
-                composable(Routes.WEB_SEARCH) { com.example.myapplication.ui.settings.WebSearchScreen(openDrawer) }
+                composable(Routes.WEB_SEARCH) {
+                    com.example.myapplication.ui.settings.WebSearchScreen { navController.safePopBackStack() }
+                }
+                composable(Routes.DEVICE_CONTROL) {
+                    com.example.myapplication.ui.settings.DeviceControlScreen { navController.safePopBackStack() }
+                }
                 composable(Routes.PROVIDERS) { ProvidersScreen(navController, openDrawer) }
                 composable(Routes.SESSION,
                     arguments = listOf(navArgument("conversationId") { type = NavType.StringType })
@@ -389,7 +394,7 @@ fun AppRoot() {
                 }
                 composable(Routes.SETTINGS) {
                     SettingsScreen(openDrawer, onOpenSection = { route ->
-                        if (route in setOf(Routes.PROVIDERS, Routes.AGENTS, Routes.CONVERSATIONS, Routes.MEMORY, Routes.SKILLS)) {
+                        if (route in setOf(Routes.PROVIDERS, Routes.AGENTS, Routes.CONVERSATIONS, Routes.MEMORY, Routes.SKILLS, Routes.WEB_SEARCH, Routes.DEVICE_CONTROL)) {
                             navController.safeNavigateDirect(route)
                         }
                     })
@@ -411,7 +416,6 @@ fun AppDrawerSheetContent(
     onClose: () -> Unit = {}
 ) {
     val entries = listOf(
-        DrawerEntry(Routes.WEB_SEARCH, "网络搜索服务", Icons.Outlined.Search),
         DrawerEntry(Routes.AGENTS, "Agents", Icons.Outlined.SmartToy),
         DrawerEntry(Routes.FILES, "工作区文件", Icons.Outlined.Folder),
         DrawerEntry(Routes.SKILLS, "Skills", Icons.Outlined.Inventory2),

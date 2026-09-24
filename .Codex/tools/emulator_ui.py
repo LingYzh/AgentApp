@@ -6,10 +6,15 @@ import xml.etree.ElementTree as ET
 import re
 import sys
 import time
+import os
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-ADB = r"D:\SDK\platform-tools\adb.exe"
+_properties = pathlib.Path(__file__).resolve().parents[2] / "local.properties"
+_sdk_line = next((line.split("=", 1)[1] for line in _properties.read_text(encoding="utf-8").splitlines()
+                  if line.startswith("sdk.dir=")), "")
+_sdk = _sdk_line.replace("\\:", ":").replace("\\\\", "\\") or os.environ.get("ANDROID_HOME", "")
+ADB = str(pathlib.Path(_sdk) / "platform-tools" / ("adb.exe" if os.name == "nt" else "adb"))
 
 
 def adb(serial, *args):
@@ -42,10 +47,13 @@ def main():
             label = node.get("text") or node.get("content-desc")
             if node.get("password") == "true":
                 label = "[password hidden]"
+            if not label and node.get("checkable") == "true":
+                label = "@switch (checked=" + node.get("checked", "") + ")"
             if label:
                 print(label, node.get("bounds"))
         return
-    matches = [n for n in root.iter("node") if args.target in (n.get("text"), n.get("content-desc"))]
+    matches = [n for n in root.iter("node") if args.target in (n.get("text"), n.get("content-desc"))
+               or (args.target == "@switch" and n.get("checkable") == "true")]
     if len(matches) != 1:
         raise SystemExit(f"Expected one target, found {len(matches)}")
     left, top, right, bottom = map(int, re.findall(r"\d+", matches[0].get("bounds")))

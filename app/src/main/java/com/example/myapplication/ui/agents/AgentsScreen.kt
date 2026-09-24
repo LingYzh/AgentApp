@@ -797,7 +797,12 @@ fun AgentEditContent(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(4.dp))
-                    val toolDescriptions = mapOf(
+                      val toolDescriptions = mapOf(
+                          Tools.DEVICE_STATUS to ("设备能力" to "查询无障碍与 Shizuku 状态"),
+                          Tools.DEVICE_OBSERVE to ("读取手机界面" to "观察当前应用的文字与可操作控件"),
+                          Tools.DEVICE_ACTION to ("操作手机界面" to "启动、点击、输入、滚动；遵循会话权限"),
+                          Tools.DEVICE_SCREENSHOT to ("手机截图" to "为支持图片的模型提供当前画面"),
+                          Tools.DEVICE_SYSTEM to ("Shizuku 系统操作" to "应用列表、停止应用和系统按键"),
                         Tools.FETCH to ("读取网页 fetch" to "获取网页与文本，不依赖搜索服务"),
                         Tools.SEARCH to ("联网搜索 search" to if (searchConfigured) "使用全局配置的搜索服务" else "未配置或已停用，请先在抽屉的网络搜索服务中配置"),
                         Tools.WRITE_FILE to ("写入文件" to "创建或覆盖工作区文本文件"),

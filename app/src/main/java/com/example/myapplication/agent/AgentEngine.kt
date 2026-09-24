@@ -24,7 +24,8 @@ import kotlinx.coroutines.ensureActive
 class AgentEngine(
     private val store: FileStore,
     private val providerFactory: ProviderFactory,
-    private val subagentRunner: SubagentRunner? = null
+    private val subagentRunner: SubagentRunner? = null,
+    private val deviceTools: AndroidDeviceTools? = null
 ) {
     class Callbacks(
         val onMessageAdded: (ChatMessage) -> Unit = {},
@@ -73,6 +74,7 @@ class AgentEngine(
         var currentFileChange: FileChange? = null
         val mediaStore = AttachmentStore(store)
         val pendingMedia = mutableListOf<ChatMessage>()
+        val deviceSession = deviceTools?.session(session.conversation.id)
         val executor = ToolExecutor(
             store = store,
             allowedTools = effectiveAllowedTools,
@@ -97,7 +99,8 @@ class AgentEngine(
                     "已读取文件 ${file.path}；原生内容已附在本轮工具结果后，请直接查看。"
                 }
             },
-            permissionSession = session
+            permissionSession = session,
+            deviceSession = deviceSession
         )
 
         var loop = 0
@@ -381,6 +384,7 @@ class AgentEngine(
             }
             throw e
         } finally {
+            deviceSession?.close()
             com.example.myapplication.diagnostics.RuntimeDiagnostics.event("run_end", "conversation" to conversation.id,
                 "mode" to session.conversation.permissionMode, "cancelled" to cancellationRecorded)
             callbacks.onToolStatus(null)

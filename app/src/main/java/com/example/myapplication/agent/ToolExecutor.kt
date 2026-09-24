@@ -23,7 +23,8 @@ class ToolExecutor(
     private val onFileChange: (FileChange) -> Unit = {},
     private val onReadMedia: ((File) -> String?)? = null,
     private val permissionSession: PermissionSession = PermissionSession(store, com.example.myapplication.data.model.Conversation(), PermissionCoordinator()),
-    private val commandExecutor: suspend (String, String) -> String = ShellCommandRunner::run
+    private val commandExecutor: suspend (String, String) -> String = ShellCommandRunner::run,
+    private val deviceSession: DeviceToolSession? = null
 ) {
     private val webTools by lazy { WebTools() }
 
@@ -37,7 +38,9 @@ class ToolExecutor(
             (allowedTools == null || spec.name in allowedTools || spec.name == Tools.GET_SESSION_STATE ||
                 (includePlanControls && spec.name in setOf(Tools.ENTER_PLAN_MODE, Tools.EXIT_PLAN_MODE))) &&
                 (spec.name != Tools.RUN_SUBAGENT || onRunSubagent != null) &&
-                (spec.name != Tools.SEARCH || store.loadConfig().webSearch.isConfigured)
+                (spec.name != Tools.SEARCH || store.loadConfig().webSearch.isConfigured) &&
+                (spec.name !in Tools.DEVICE_NAMES || (deviceSession != null &&
+                    (spec.name == Tools.DEVICE_STATUS || deviceSession.enabled)))
         }
     }
 
@@ -69,6 +72,13 @@ class ToolExecutor(
         }
         fun arg(key: String): String = args[key]?.jsonPrimitive?.content ?: ""
         return try {
+            if (name in Tools.DEVICE_NAMES) {
+                if (name == Tools.DEVICE_ACTION || (name == Tools.DEVICE_SYSTEM && arg("operation") != "list_apps")) {
+                    permissionSession.authorizeDeviceAction("$name\n$args")?.let { return "错误: $it" }
+                }
+                currentCoroutineContext().ensureActive()
+                return requireNotNull(deviceSession).execute(name, args, onReadMedia)
+            }
             when (name) {
                 Tools.FETCH -> webTools.fetch(arg("url"))
                 Tools.SEARCH -> webTools.search(store.loadConfig().webSearch, arg("query"))

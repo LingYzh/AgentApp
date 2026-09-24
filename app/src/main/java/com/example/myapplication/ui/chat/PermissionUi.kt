@@ -342,12 +342,13 @@ internal fun PermissionRequestDialog(request: PermissionRequest, onResolve: (Per
     var editingFeedback by remember(request.id) { mutableStateOf(false) }
     val isPlan = request.kind == PermissionRequestKind.PLAN
     val isDelete = request.kind == PermissionRequestKind.FILE_DELETE
+    val isDevice = request.kind == PermissionRequestKind.DEVICE_ACTION
     Dialog(onDismissRequest = {}, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxWidth(0.96f).imePadding().heightIn(max = 780.dp)
             .then(if (isPlan) Modifier.fillMaxHeight(0.92f) else Modifier.wrapContentHeight()),
             shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.background) {
             Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text(if (isPlan) "审阅计划" else if (isDelete) "确认删除文件" else "授权执行命令", style = MaterialTheme.typography.titleLarge)
+                Text(if (isPlan) "审阅计划" else if (isDelete) "确认删除文件" else if (isDevice) "授权操作手机" else "授权执行命令", style = MaterialTheme.typography.titleLarge)
                 Column(Modifier.weight(1f, fill = isPlan).verticalScroll(rememberScrollState())) {
                     if (isPlan) {
                         Text(request.planPath, style = MaterialTheme.typography.labelSmall)
@@ -358,7 +359,7 @@ internal fun PermissionRequestDialog(request: PermissionRequest, onResolve: (Per
                         Spacer(Modifier.height(12.dp))
                         SelectionContainer { Text(request.filePath, fontFamily = FontFamily.Monospace) }
                     } else {
-                        Text("工作目录：${request.workingDirectory}", style = MaterialTheme.typography.bodySmall)
+                        Text(if (isDevice) "此操作将在当前手机上执行。切换页面后可能需要重新观察。" else "工作目录：${request.workingDirectory}", style = MaterialTheme.typography.bodySmall)
                         Spacer(Modifier.height(12.dp))
                         Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                             SelectionContainer { Text(request.command, modifier = Modifier.fillMaxWidth().padding(12.dp),

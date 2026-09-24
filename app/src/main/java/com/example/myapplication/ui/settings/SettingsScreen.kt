@@ -39,6 +39,8 @@ import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -421,7 +423,8 @@ fun SettingsContent(
                             autoApprovedCommandCount = autoApprovedCommands.size,
                             storageAccessGranted = storageAccessGranted,
                             onRequestStorageAccess = onRequestStorageAccess,
-                            onOpenBackup = { page = SettingsPage.BACKUP }
+                            onOpenBackup = { page = SettingsPage.BACKUP },
+                            onOpenSection = onOpenSection
                         )
                         SettingsPage.BACKUP -> BackupPage(
                             modifier = Modifier.fillMaxSize().padding(padding),
@@ -521,7 +524,8 @@ private fun SettingsMainPage(
     autoApprovedCommandCount: Int,
     storageAccessGranted: Boolean,
     onRequestStorageAccess: () -> Unit,
-    onOpenBackup: () -> Unit
+    onOpenBackup: () -> Unit,
+    onOpenSection: (String) -> Unit
 ) {
     Column(
         modifier
@@ -594,16 +598,24 @@ private fun SettingsMainPage(
             onClick = onOpenCommands
         )
 
-        SettingsSectionTitle("设备与存储")
+        SettingsSectionTitle("搜索与设备")
+        SettingsOptionRow(
+            icon = Icons.Filled.Search,
+            title = "网络搜索服务",
+            subtitle = "选择搜索服务并配置连接",
+            onClick = { onOpenSection("webSearch") },
+            showDivider = true
+        )
+        SettingsOptionRow(
+            icon = Icons.Filled.PhoneAndroid,
+            title = "设备控制",
+            subtitle = "无障碍、Shizuku 与运行状态",
+            onClick = { onOpenSection("deviceControl") }
+        )
+        SettingsSectionTitle("存储")
         StorageAccessCard(
             accessGranted = storageAccessGranted,
             onRequestAccess = onRequestStorageAccess
-        )
-        Text(
-            "尚无 root / Shizuku / 无障碍控制接入。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 8.dp)
         )
 
         SettingsSectionTitle("数据")

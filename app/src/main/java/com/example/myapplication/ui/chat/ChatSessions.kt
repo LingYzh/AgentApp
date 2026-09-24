@@ -22,10 +22,11 @@ data class ChatUiState(
     val attachments: List<MessageAttachment> = emptyList()
 )
 
-/** Activity lifetime, not a foreground/background service. Route handoff shares the same job. */
+/** Saved UI belongs to the Activity; running tasks are retained in the application pool. */
 class ChatSessions(private val saved: SavedStateHandle) : ViewModel() {
-    private val stores = linkedMapOf<String, ViewModelStore>()
-    private val sessions = linkedMapOf<String, ChatViewModel>()
+    private val pool = AgentApp.instance.chatSessionPool
+    private val stores get() = pool.stores
+    private val sessions get() = pool.sessions
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     init {
@@ -75,5 +76,5 @@ class ChatSessions(private val saved: SavedStateHandle) : ViewModel() {
         }
     }
 
-    override fun onCleared() { stores.values.forEach { it.clear() } }
+    override fun onCleared() { pool.discardInactive() }
 }

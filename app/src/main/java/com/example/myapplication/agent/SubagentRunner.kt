@@ -23,7 +23,8 @@ class SubagentRunner(
     private val store: FileStore,
     private val providerFactory: ProviderFactory,
     private val onStatus: (String) -> Unit = {},
-    private val registry: SubagentRegistry = SubagentRegistry()
+    private val registry: SubagentRegistry = SubagentRegistry(),
+    private val deviceTools: AndroidDeviceTools? = null
 ) {
     suspend fun run(
         task: String,
@@ -78,7 +79,7 @@ class SubagentRunner(
         conversation.messages += ChatMessage(role = "user", content = task)
 
         return supervisorScope {
-            val engine = AgentEngine(store, providerFactory, subagentRunner = null)
+            val engine = AgentEngine(store, providerFactory, subagentRunner = null, deviceTools = deviceTools)
             val child = async(start = CoroutineStart.LAZY) {
                 engine.run(
                     conversation = conversation,
